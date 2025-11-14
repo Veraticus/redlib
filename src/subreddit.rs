@@ -1,6 +1,6 @@
 #![allow(clippy::cmp_owned)]
 
-use crate::{config, utils};
+use crate::{collections, config, utils};
 // CRATES
 use crate::utils::{
 	catch_random, error, filter_posts, format_num, format_url, get_filters, info, nsfw_landing, param, redirect, rewrite_urls, setting, template, val, Post, Preferences,
@@ -36,6 +36,7 @@ struct SubredditTemplate {
 	/// Whether all posts were hidden because they are NSFW (and user has disabled show NSFW)
 	all_posts_hidden_nsfw: bool,
 	no_posts: bool,
+	current_collection: String,
 }
 
 #[derive(Template)]
@@ -70,8 +71,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let remove_default_feeds = setting(&req, "remove_default_feeds") == "on";
 	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
 	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
-
-	let sub_name = req.param("sub").unwrap_or(if front_page == "default" || front_page.is_empty() {
+	let default_front = if front_page == "default" || front_page.is_empty() {
 		if subscribed.is_empty() {
 			"popular".to_string()
 		} else {
@@ -79,7 +79,23 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 		}
 	} else {
 		front_page.clone()
-	});
+	};
+
+	let collection_param = req.param("collection");
+	let mut current_collection = String::new();
+	let sub_name = if let Some(sub) = req.param("sub") {
+		sub
+	} else if let Some(alias) = collection_param.clone() {
+		match collections::resolve(&alias) {
+			Some(target) => {
+				current_collection = alias;
+				target
+			}
+			None => return error(req, &format!("Collection \"{alias}\" is not configured")).await,
+		}
+	} else {
+		default_front
+	};
 
 	if (sub_name == "popular" || sub_name == "all") && remove_default_feeds {
 		if subscribed.is_empty() {
@@ -160,6 +176,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			all_posts_filtered: false,
 			all_posts_hidden_nsfw: false,
 			no_posts: false,
+			current_collection: current_collection.clone(),
 		}))
 	} else {
 		match Post::fetch(&path, quarantined).await {
@@ -183,6 +200,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					all_posts_filtered,
 					all_posts_hidden_nsfw,
 					no_posts,
+					current_collection: current_collection.clone(),
 				}))
 			}
 			Err(msg) => match msg.as_str() {

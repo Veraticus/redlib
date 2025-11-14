@@ -699,7 +699,7 @@ impl Preferences {
 	/// Build preferences from cookies
 	pub fn new(req: &Request<Body>) -> Self {
 		// Read available theme names from embedded css files.
-		// Always make the default "system" theme available.
+		// Always make the "system" theme available even though it isn't backed by a static CSS file.
 		let mut themes = vec!["system".to_string()];
 		for file in ThemeAssets::iter() {
 			let chunks: Vec<&str> = file.as_ref().split(".css").collect();
@@ -707,7 +707,7 @@ impl Preferences {
 		}
 		Self {
 			available_themes: themes,
-			theme: setting(req, "theme"),
+			theme: setting_or_default(req, "theme", "catppuccinMocha".to_string()),
 			front_page: setting(req, "front_page"),
 			layout: setting(req, "layout"),
 			wide: setting(req, "wide"),

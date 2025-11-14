@@ -43,9 +43,9 @@
 	{% endif %}
 {% endblock %}
 
-{% block subscriptions %}
-	{% call utils::sub_list(post.community.as_str()) %}
-{% endblock %}
+	{% block subscriptions %}
+		{% call utils::sub_list(post.community.as_str(), "") %}
+	{% endblock %}
 
 {% block content %}
 	<div id="column_one">
