@@ -24,7 +24,7 @@
 
         inherit (pkgs) lib;
 
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        rustToolchain = pkgs.rust-bin.stable."1.83.0".default.override {
           targets = [ "x86_64-unknown-linux-musl" ];
         };
 
@@ -60,6 +60,14 @@
           created = "now";
           copyToRoot = with pkgs.dockerTools; [ caCertificates fakeNss ];
           config.Cmd = "${redlib}/bin/redlib";
+        };
+
+        devShells.default = pkgs.mkShell {
+          packages = [
+            rustToolchain
+            pkgs.pkg-config
+            pkgs.openssl
+          ];
         };
       });
 }
