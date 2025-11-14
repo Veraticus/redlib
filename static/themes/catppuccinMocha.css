@@ -1,4 +1,5 @@
 /* Catppuccin Mocha theme setting */
+:root:has(> .catppuccinMocha),
 .catppuccinMocha {
 	--accent: #cba6f7;
 	--green: #a6e3a1;
@@ -8,9 +9,24 @@
 	--outside: #181825;
 	--post: #1e1e2e;
 	--panel-border: 1px solid #313244;
-	--highlighted: #313244;
+	--highlighted: #45475a;
 	--visited: #b4befe;
-	--shadow: 0 1px 3px rgba(17, 17, 27, 0.6);
+	--shadow: 0 1px 6px rgba(17, 17, 27, 0.55);
+	--popup: #f5c2e7;
+	--popup-red: #f5c2e7;
+	--popup-black: #1e1e2e;
+	--popup-text: #cdd6f4;
+	--popup-background-1: #1e1e2e;
+	--popup-background-2: #11111b;
+	--popup-reddit-url: var(--accent);
+	--popup-toreddit-background: #1e1e2e;
+	--popup-toreddit-text: var(--accent);
+	--popup-goback-background: var(--accent);
+	--popup-goback-text: #1e1e2e;
+	--popup-border: 1px solid var(--accent);
+	--spoiler: #f9e2af;
+	--nsfw: #f38ba8;
+	--admin: #f2cdcd;
 }
 
 html:has(> .catppuccinMocha) {
