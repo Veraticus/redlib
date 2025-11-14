@@ -4,7 +4,7 @@
 {% block title %}Redlib Settings{% endblock %}
 
 {% block subscriptions %}
-{% call utils::sub_list("") %}
+{% call utils::sub_list("", "") %}
 {% endblock %}
 
 {% block search %}
@@ -20,7 +20,7 @@
 				<div class="prefs-group">
 					<label for="theme">Theme:</label>
 					<select name="theme" id="theme">
-						{% call utils::options(prefs.theme, prefs.available_themes, "system") %}
+					{% call utils::options(prefs.theme, prefs.available_themes, "catppuccinMocha") %}
 					</select>
 				</div>
 			</fieldset>

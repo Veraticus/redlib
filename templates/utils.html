@@ -37,7 +37,7 @@
 	{% for flair_part in flair_parts.clone() %}{% if flair_part.flair_part_type == "emoji" %}<span class="emoji" style="background-image:url('{{ flair_part.value }}');"></span>{% else if flair_part.flair_part_type == "text" && !flair_part.value.is_empty() %}<span>{{ flair_part.value }}</span>{% endif %}{% endfor %}
 {%- endmacro %}
 
-{% macro sub_list(current) -%}
+{% macro sub_list(current, current_collection) -%}
 	<details id="feeds">
 		<summary>Feeds</summary>
 		<div id="feed_list">
@@ -51,6 +51,13 @@
 				<p>REDDIT FEEDS</p>
 				{% for sub in prefs.subscriptions %}
 					<a href="/r/{{ sub }}" {% if sub == current %}class="selected"{% endif %}>{{ sub }}</a>
+				{% endfor %}
+			{% endif %}
+			{% let collections = crate::collections::all() %}
+			{% if !collections.is_empty() %}
+				<p>COLLECTIONS</p>
+				{% for collection in collections %}
+					<a href="/c/{{ collection.name }}" {% if collection.name == current_collection %}class="selected"{% endif %}>{{ collection.name }}</a>
 				{% endfor %}
 			{% endif %}
 		</div>

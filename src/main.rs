@@ -304,6 +304,9 @@ async fn main() {
 	app.at("/r/:sub.rss").get(|r| subreddit::rss(r).boxed());
 
 	// Subreddit services
+	app.at("/c/:collection").get(|r| subreddit::community(r).boxed());
+	app.at("/c/:collection/:sort").get(|r| subreddit::community(r).boxed());
+
 	app
 		.at("/r/:sub")
 		.get(|r| subreddit::community(r).boxed())

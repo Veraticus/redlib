@@ -3,9 +3,9 @@
 
 {% block title %}Redlib: search results - {{ params.q }}{% endblock %}
 
-{% block subscriptions %}
-	{% call utils::sub_list("") %}
-{% endblock %}
+	{% block subscriptions %}
+		{% call utils::sub_list("", "") %}
+	{% endblock %}
 
 {% block content %}
 	<div id="column_one">

@@ -417,13 +417,14 @@ Assign a default value for each instance-specific setting by passing environment
 | `PORT`                    | Integer 0-65535 | `8080`                 | The **internal** port Redlib listens on.                                                                  |
 | `ENABLE_RSS`              | `["on", "off"]` | `off`                  | Enables RSS feed generation.                                                                              |
 | `FULL_URL`                | String          | (empty)                | Allows for proper URLs (for now, only needed by RSS)
+| `COLLECTIONS`             | Semicolon-delimited alias pairs such as `ai=sub1+sub2;news=worldnews+technology` | (empty) | Maps friendly names to multi-subreddits, exposing each alias at `/c/<name>` and listing them in the Feeds menu. |
 ## Default user settings
 
 Assign a default value for each user-modifiable setting by passing environment variables to Redlib in the format `REDLIB_DEFAULT_{Y}`. Replace `{Y}` with the setting name (see list below) in capital letters.
 
 | Name                                | Possible values                                                                                                                    | Default value |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `THEME`                             | `["system", "light", "dark", "black", "dracula", "nord", "laserwave", "violet", "gold", "rosebox", "gruvboxdark", "gruvboxlight", "tokyoNight", "icebergDark", "doomone", "libredditBlack", "libredditDark", "libredditLight"]` | `system`      |
+| `THEME`                             | `["system", "light", "dark", "black", "dracula", "nord", "laserwave", "violet", "gold", "rosebox", "gruvboxdark", "gruvboxlight", "tokyoNight", "icebergDark", "doomone", "libredditBlack", "libredditDark", "libredditLight", "catppuccinMocha"]` | `catppuccinMocha`      |
 | `FRONT_PAGE`                        | `["default", "popular", "all"]`                                                                                                    | `default`     |
 | `LAYOUT`                            | `["card", "clean", "compact"]`                                                                                                     | `card`        |
 | `WIDE`                              | `["on", "off"]`                                                                                                                    | `off`         |
