@@ -1,5 +1,4 @@
 /* Catppuccin Mocha theme setting */
-:root:has(> .catppuccinMocha),
 .catppuccinMocha {
 	--accent: #cba6f7;
 	--green: #a6e3a1;
