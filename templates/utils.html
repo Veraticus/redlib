@@ -14,13 +14,13 @@
 	{% endfor %}
 {%- endmacro %}
 
-{% macro search(root, search) -%}
+{% macro search(root, search, context_label) -%}
 <form action="{% if root != "/r/" && !root.is_empty() %}{{ root }}{% endif %}/search" id="searchbox">
 	<input id="search" type="text" name="q" placeholder="Search" title="Search redlib" value="{{ search }}">
 	{% if root != "/r/" && !root.is_empty() %}
 	<div id="inside">
 		<input type="checkbox" name="restrict_sr" id="restrict_sr" checked>
-		<label for="restrict_sr" class="search_label" title="Restrict search to this subreddit">in {{ root }}</label>
+		<label for="restrict_sr" class="search_label" title="Restrict search to this subreddit">in {% if !context_label.is_empty() %}{{ context_label }}{% else %}{{ root }}{% endif %}</label>
 	</div>
 	{% endif %}
 	<button class="submit">
@@ -39,7 +39,7 @@
 
 {% macro sub_list(current, current_collection) -%}
 	<details id="feeds">
-		<summary>Feeds</summary>
+		<summary>Feeds{% if !current_collection.is_empty() %}&nbsp;·&nbsp;c/{{ current_collection }}{% endif %}</summary>
 		<div id="feed_list">
 			<p>MAIN FEEDS</p>
 			<a href="/">Home</a>
