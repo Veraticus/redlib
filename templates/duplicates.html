@@ -4,7 +4,7 @@
 {% block title %}{{ post.title }} - r/{{ post.community }}{% endblock %}
 
 {% block search %}
-	{% call utils::search(["/r/", post.community.as_str()].concat(), "") %}
+	{% call utils::search(["/r/", post.community.as_str()].concat(), "", "") %}
 {% endblock %}
 
 {% block root %}/r/{{ post.community }}{% endblock %}{% block location %}r/{{ post.community }}{% endblock %}

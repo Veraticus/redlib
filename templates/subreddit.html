@@ -2,24 +2,47 @@
 {% import "utils.html" as utils %}
 
 {% block title %}
-	{% if sub.title != "" %}{{ sub.title }}
+	{% if !current_collection.is_empty() %}{{ current_collection }}
+	{% else if sub.title != "" %}{{ sub.title }}
 	{% else if sub.name != "" %}{{ sub.name }}
 	{% else %}Redlib{% endif %}
 {% endblock %}
 
 {% block search %}
-	{% call utils::search(["/r/", sub.name.as_str()].concat(), "") %}
+	{% if current_collection.is_empty() %}
+		{% call utils::search(["/r/", sub.name.as_str()].concat(), "", "") %}
+	{% else %}
+		{% call utils::search(["/r/", sub.name.as_str()].concat(), "", ["c/", current_collection.as_str()].concat()) %}
+	{% endif %}
 {% endblock %}
 
 {% block subscriptions %}
 	{% call utils::sub_list(sub.name.as_str(), current_collection.as_str()) %}
 {% endblock %}
 
-{% block body %}
-	<main>
-		{% if !is_filtered %}
-		<div id="column_one">
-			<form id="sort">
+	{% block body %}
+		<main>
+			{% if !is_filtered %}
+			<div id="column_one">
+				{% if !current_collection.is_empty() %}
+				<section class="collection_banner">
+					<div class="collection_banner_title">
+						<span>Collection</span>
+						<strong>c/{{ current_collection }}</strong>
+					</div>
+					{% if !collection_subreddits.is_empty() %}
+					<div class="collection_banner_subs">
+						<span>Includes</span>
+						<div class="collection_banner_list">
+							{% for collection_sub in collection_subreddits %}
+								<a class="collection_tag" href="/{{ collection_sub }}">{{ collection_sub }}</a>
+							{% endfor %}
+						</div>
+					</div>
+					{% endif %}
+				</section>
+				{% endif %}
+				<form id="sort">
 				<div id="sort_options">
 					{% if sub.name.is_empty() %}
 						{% call utils::sort("", ["hot", "new", "top", "rising", "controversial"], sort.0) %}
@@ -40,7 +63,7 @@
 				{% endif %}
 			</form>
 
-			{% if sub.name.contains("+") %}
+			{% if sub.name.contains("+") && current_collection.is_empty() %}
 				<form action="/r/{{ sub.name }}/subscribe?redirect={{ redirect_url }}" method="POST">
 					<button id="multisub" class="subscribe" title="Subscribe to each sub in this multireddit">Subscribe to Multireddit</button>
 				</form>

@@ -7,7 +7,7 @@
 {% endblock %}
 
 {% block search %}
-	{% call utils::search(["/r/", sub.as_str()].concat(), "") %}
+	{% call utils::search(["/r/", sub.as_str()].concat(), "", "") %}
 {% endblock %}
 
 {% block subscriptions %}

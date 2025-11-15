@@ -631,6 +631,55 @@ aside {
     background-color: var(--foreground);
 }
 
+/* Collection banner */
+
+.collection_banner {
+    border-radius: 5px;
+    border: var(--panel-border);
+    background-color: var(--outside);
+    padding: 12px 15px;
+    margin-bottom: 15px;
+}
+
+.collection_banner_title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.collection_banner_title strong {
+    font-size: 16px;
+    color: var(--accent);
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.collection_banner_subs {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 14px;
+}
+
+.collection_banner_list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.collection_tag {
+    border-radius: 999px;
+    border: var(--panel-border);
+    padding: 2px 10px;
+    text-decoration: none;
+    font-size: 13px;
+    background-color: var(--foreground);
+}
+
 /* Wiki Pages */
 
 #wiki {
