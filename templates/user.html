@@ -1,5 +1,5 @@
 {% extends "base.html" %} {% import "utils.html" as utils %} {% block search %}
-{% call utils::search("".to_owned(), "") %} {% endblock %} {% block title %}{{
+{% call utils::search("".to_owned(), "", "") %} {% endblock %} {% block title %}{{
 user.name.replace("u/", "") }} (u/{{ user.name }}) - Redlib{% endblock %} {%
 block subscriptions %} {% call utils::sub_list("", "") %} {% endblock %} {% block
 body %}

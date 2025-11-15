@@ -36,6 +36,7 @@ struct SubredditTemplate {
 	all_posts_hidden_nsfw: bool,
 	no_posts: bool,
 	current_collection: String,
+	collection_subreddits: Vec<String>,
 }
 
 #[derive(Template)]
@@ -94,6 +95,23 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 		}
 	} else {
 		default_front
+	};
+
+	let collection_subreddits: Vec<String> = if current_collection.is_empty() {
+		Vec::new()
+	} else {
+		sub_name
+			.split('+')
+			.filter(|entry| !entry.trim().is_empty())
+			.map(|entry| {
+				let trimmed = entry.trim();
+				if trimmed.starts_with("r/") || trimmed.starts_with("u/") {
+					trimmed.to_string()
+				} else {
+					format!("r/{trimmed}")
+				}
+			})
+			.collect()
 	};
 
 	if (sub_name == "popular" || sub_name == "all") && remove_default_feeds {
@@ -176,6 +194,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			all_posts_hidden_nsfw: false,
 			no_posts: false,
 			current_collection: current_collection.clone(),
+			collection_subreddits: collection_subreddits.clone(),
 		}))
 	} else {
 		match Post::fetch(&path, quarantined).await {
@@ -187,9 +206,9 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					posts.sort_by(|a, b| b.created_ts.cmp(&a.created_ts));
 					posts.sort_by(|a, b| b.flags.stickied.cmp(&a.flags.stickied));
 				}
-				Ok(template(&SubredditTemplate {
-					sub,
-					posts,
+			Ok(template(&SubredditTemplate {
+				sub,
+				posts,
 					sort: (sort, param(&path, "t").unwrap_or_default()),
 					ends: (param(&path, "after").unwrap_or_default(), after),
 					prefs: Preferences::new(&req),
@@ -197,10 +216,11 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					redirect_url,
 					is_filtered: false,
 					all_posts_filtered,
-					all_posts_hidden_nsfw,
-					no_posts,
-					current_collection: current_collection.clone(),
-				}))
+				all_posts_hidden_nsfw,
+				no_posts,
+				current_collection: current_collection.clone(),
+				collection_subreddits: collection_subreddits.clone(),
+			}))
 			}
 			Err(msg) => match msg.as_str() {
 				"quarantined" | "gated" => Ok(quarantine(&req, sub_name, &msg)),
