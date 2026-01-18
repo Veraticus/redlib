@@ -14,7 +14,7 @@ use log::{info, warn};
 use redlib::client::{canonical_path, proxy, rate_limit_check, CLIENT};
 use redlib::server::{self, RequestExt};
 use redlib::utils::{error, redirect, ThemeAssets};
-use redlib::{config, duplicates, headers, instance_info, json, post, search, settings, subreddit, user};
+use redlib::{config, duplicates, headers, instance_info, post, search, settings, subreddit, user};
 
 use redlib::client::OAUTH_CLIENT;
 
@@ -353,6 +353,12 @@ async fn main() {
 	app.at("/r/:sub/duplicates/:id/:title").get(|r| duplicates::item(r).boxed());
 	app.at("/duplicates/:id").get(|r| duplicates::item(r).boxed());
 	app.at("/duplicates/:id/:title").get(|r| duplicates::item(r).boxed());
+
+	// JSON API routes for duplicates
+	app.at("/r/:sub/duplicates/:id.js").get(|r| duplicates::item_json(r).boxed());
+	app.at("/r/:sub/duplicates/:id/:title.js").get(|r| duplicates::item_json(r).boxed());
+	app.at("/duplicates/:id.js").get(|r| duplicates::item_json(r).boxed());
+	app.at("/duplicates/:id/:title.js").get(|r| duplicates::item_json(r).boxed());
 
 	app.at("/r/:sub/search").get(|r| search::find(r).boxed());
 
