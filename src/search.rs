@@ -1,6 +1,7 @@
 #![allow(clippy::cmp_owned)]
 
 // CRATES
+use crate::json::{json_error, json_response, SearchResponse};
 use crate::utils::{self, catch_random, error, filter_posts, format_num, format_url, get_filters, param, redirect, setting, template, val, Post, Preferences};
 use crate::{
 	client::json,
@@ -164,6 +165,39 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 				}
 			}
 		}
+	}
+}
+
+/// JSON API endpoint for search results.
+pub async fn find_json(req: Request<Body>) -> Result<Response<Body>, String> {
+	let nsfw_results = if !utils::sfw_only() { "&include_over_18=on" } else { "" };
+	let uri_path = req.uri().path().replace("+", "%2B").trim_end_matches(".js").to_string();
+	let path = format!("{}.json?{}{}&raw_json=1", uri_path, req.uri().query().unwrap_or_default(), nsfw_results);
+	let query = param(&path, "q").unwrap_or_default();
+
+	if query.is_empty() {
+		return Ok(json_error("Search query is required".to_string(), 400));
+	}
+
+	let sub = req.param("sub").unwrap_or_default();
+	let quarantined = can_access_quarantine(&req, &sub);
+
+	let typed = param(&path, "type").unwrap_or_default();
+
+	// Only return posts for JSON API (not subreddit suggestions)
+	if typed == "sr" {
+		return Ok(json_error("Subreddit search not supported in JSON API, use post search".to_string(), 400));
+	}
+
+	match Post::fetch(&path, quarantined).await {
+		Ok((posts, after)) => {
+			let response = SearchResponse {
+				posts,
+				after: if after.is_empty() { None } else { Some(after) },
+			};
+			Ok(json_response(response))
+		}
+		Err(msg) => Ok(json_error(msg, 500)),
 	}
 }
 

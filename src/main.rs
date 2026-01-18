@@ -356,6 +356,9 @@ async fn main() {
 
 	app.at("/r/:sub/search").get(|r| search::find(r).boxed());
 
+	// JSON API routes for search
+	app.at("/r/:sub/search.js").get(|r| search::find_json(r).boxed());
+
 	app
 		.at("/r/:sub/w")
 		.get(|r| async move { Ok(redirect(&format!("/r/{}/wiki", r.param("sub").unwrap_or_default()))) }.boxed());
@@ -382,6 +385,7 @@ async fn main() {
 
 	// Search all of Reddit
 	app.at("/search").get(|r| search::find(r).boxed());
+	app.at("/search.js").get(|r| search::find_json(r).boxed());
 
 	// Handle about pages
 	app.at("/about").get(|req| error(req, "About pages aren't added yet").boxed());
