@@ -3,6 +3,7 @@ pub mod collections;
 pub mod config;
 pub mod duplicates;
 pub mod instance_info;
+pub mod json;
 pub mod oauth;
 pub mod oauth_resources;
 pub mod post;
