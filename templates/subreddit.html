@@ -44,7 +44,9 @@
 				{% endif %}
 				<form id="sort">
 				<div id="sort_options">
-					{% if sub.name.is_empty() %}
+					{% if !current_collection.is_empty() %}
+						{% call utils::sort(["/c/", current_collection.as_str()].concat(), ["hot", "new", "top", "rising", "controversial"], sort.0) %}
+					{% else if sub.name.is_empty() %}
 						{% call utils::sort("", ["hot", "new", "top", "rising", "controversial"], sort.0) %}
 					{% else %}
 						{% call utils::sort(["/r/", sub.name.as_str()].concat(), ["hot", "new", "top", "rising", "controversial"], sort.0) %}
