@@ -336,6 +336,14 @@ async fn main() {
 	app.at("/comments/:id/:title").get(|r| post::item(r).boxed());
 	app.at("/comments/:id/:title/:comment_id").get(|r| post::item(r).boxed());
 
+	// JSON API routes for posts
+	app.at("/r/:sub/comments/:id.js").get(|r| post::item_json(r).boxed());
+	app.at("/r/:sub/comments/:id/:title.js").get(|r| post::item_json(r).boxed());
+	app.at("/r/:sub/comments/:id/:title/:comment_id.js").get(|r| post::item_json(r).boxed());
+	app.at("/comments/:id.js").get(|r| post::item_json(r).boxed());
+	app.at("/comments/:id/:title.js").get(|r| post::item_json(r).boxed());
+	app.at("/comments/:id/:title/:comment_id.js").get(|r| post::item_json(r).boxed());
+
 	app.at("/r/:sub/duplicates/:id").get(|r| duplicates::item(r).boxed());
 	app.at("/r/:sub/duplicates/:id/:title").get(|r| duplicates::item(r).boxed());
 	app.at("/duplicates/:id").get(|r| duplicates::item(r).boxed());

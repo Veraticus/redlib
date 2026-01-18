@@ -3,6 +3,7 @@
 // CRATES
 use crate::client::json;
 use crate::config::get_setting;
+use crate::json::{json_error, json_response, PostResponse};
 use crate::server::RequestExt;
 use crate::subreddit::{can_access_quarantine, quarantine};
 use crate::utils::{
@@ -107,6 +108,38 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 				Ok(quarantine(&req, sub, &msg))
 			} else {
 				error(req, &msg).await
+			}
+		}
+	}
+}
+
+/// JSON API endpoint for post data.
+pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
+	let path: String = format!("{}.json?{}&raw_json=1", req.uri().path().trim_end_matches(".js"), req.uri().query().unwrap_or_default());
+	let sub = req.param("sub").unwrap_or_default();
+	let quarantined = can_access_quarantine(&req, &sub);
+
+	let highlighted_comment = &req.param("comment_id").unwrap_or_default();
+
+	match json(path, quarantined).await {
+		Ok(response) => {
+			let post = parse_post(&response[0]["data"]["children"][0]).await;
+
+			// Check NSFW gating (server-side SFW_ONLY only)
+			if post.nsfw && crate::utils::sfw_only() {
+				return Ok(json_error("NSFW content is disabled on this instance".to_string(), 403));
+			}
+
+			let filters = get_filters(&req);
+			let comments = parse_comments(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &req);
+
+			Ok(json_response(PostResponse { post, comments }))
+		}
+		Err(msg) => {
+			if msg == "quarantined" || msg == "gated" {
+				Ok(json_error(format!("Post is {msg}"), 403))
+			} else {
+				Ok(json_error(msg, 500))
 			}
 		}
 	}
