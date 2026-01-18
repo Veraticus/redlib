@@ -1,6 +1,6 @@
 #![allow(clippy::cmp_owned)]
 
-use crate::json::{json_error, json_response, SubredditResponse};
+use crate::json::{json_error, json_response, SubredditResponse, WikiResponse};
 use crate::utils::{
 	Post, Preferences, Subreddit, catch_random, error, filter_posts, format_num, format_url, get_filters, info, nsfw_landing, param, redirect, rewrite_urls, setting, template, to_absolute_url, val
 };
@@ -602,6 +602,38 @@ pub async fn wiki(req: Request<Body>) -> Result<Response<Body>, String> {
 				Ok(quarantine(&req, sub, &msg))
 			} else {
 				error(req, &msg).await
+			}
+		}
+	}
+}
+
+/// JSON API endpoint for wiki pages.
+pub async fn wiki_json(req: Request<Body>) -> Result<Response<Body>, String> {
+	let sub = req.param("sub").unwrap_or_else(|| "reddit.com".to_string());
+	let quarantined = can_access_quarantine(&req, &sub);
+
+	// Handle random subreddits - return error for JSON API
+	if sub == "random" || sub == "randnsfw" {
+		return Ok(json_error("Random subreddits not supported in JSON API".to_string(), 400));
+	}
+
+	let page = req.param("page").unwrap_or_else(|| "index".to_string());
+	let path: String = format!("/r/{sub}/wiki/{page}.json?raw_json=1");
+
+	match json(path, quarantined).await {
+		Ok(response) => {
+			let content = rewrite_urls(response["data"]["content_html"].as_str().unwrap_or(""));
+			Ok(json_response(WikiResponse {
+				subreddit: sub,
+				page,
+				content,
+			}))
+		}
+		Err(msg) => {
+			if msg == "quarantined" || msg == "gated" {
+				Ok(json_error(format!("r/{sub} is {msg}"), 403))
+			} else {
+				Ok(json_error(msg, 500))
 			}
 		}
 	}
