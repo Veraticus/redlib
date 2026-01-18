@@ -290,6 +290,11 @@ async fn main() {
 	app.at("/user/:name.rss").get(|r| user::rss(r).boxed());
 	app.at("/user/:name").get(|r| user::profile(r).boxed());
 	app.at("/user/:name/:listing").get(|r| user::profile(r).boxed());
+
+	// JSON API routes for users
+	app.at("/user/:name.js").get(|r| user::profile_json(r).boxed());
+	app.at("/user/:name/:listing.js").get(|r| user::profile_json(r).boxed());
+
 	app.at("/user/:name/comments/:id").get(|r| post::item(r).boxed());
 	app.at("/user/:name/comments/:id/:title").get(|r| post::item(r).boxed());
 	app.at("/user/:name/comments/:id/:title/:comment_id").get(|r| post::item(r).boxed());

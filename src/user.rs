@@ -2,6 +2,7 @@
 
 // CRATES
 use crate::client::json;
+use crate::json::{json_error, json_response, UserResponse};
 use crate::server::RequestExt;
 use crate::utils::{error, filter_posts, format_url, get_filters, nsfw_landing, param, setting, template, Post, Preferences, User};
 use crate::{config, utils};
@@ -103,6 +104,37 @@ pub async fn profile(req: Request<Body>) -> Result<Response<Body>, String> {
 			// If there is an error show error page
 			Err(msg) => error(req, &msg).await,
 		}
+	}
+}
+
+/// JSON API endpoint for user profile data.
+pub async fn profile_json(req: Request<Body>) -> Result<Response<Body>, String> {
+	let listing = req.param("listing").unwrap_or_else(|| "overview".to_string());
+
+	let path = format!(
+		"/user/{}/{listing}.json?{}&raw_json=1",
+		req.param("name").unwrap_or_else(|| "reddit".to_string()),
+		req.uri().query().unwrap_or_default(),
+	);
+
+	let username = req.param("name").unwrap_or_default();
+	let user = user(&username).await.unwrap_or_default();
+
+	// Check NSFW gating (server-side SFW_ONLY only)
+	if user.nsfw && crate::utils::sfw_only() {
+		return Ok(json_error("NSFW content is disabled on this instance".to_string(), 403));
+	}
+
+	match Post::fetch(&path, false).await {
+		Ok((posts, after)) => {
+			let response = UserResponse {
+				user,
+				posts,
+				after: if after.is_empty() { None } else { Some(after) },
+			};
+			Ok(json_response(response))
+		}
+		Err(msg) => Ok(json_error(msg, 500)),
 	}
 }
 
