@@ -14,7 +14,7 @@ use log::{info, warn};
 use redlib::client::{canonical_path, proxy, rate_limit_check, CLIENT};
 use redlib::server::{self, RequestExt};
 use redlib::utils::{error, redirect, ThemeAssets};
-use redlib::{config, duplicates, headers, instance_info, post, search, settings, subreddit, user};
+use redlib::{config, duplicates, headers, instance_info, json, post, search, settings, subreddit, user};
 
 use redlib::client::OAUTH_CLIENT;
 
@@ -306,6 +306,12 @@ async fn main() {
 	// Subreddit services
 	app.at("/c/:collection").get(|r| subreddit::community(r).boxed());
 	app.at("/c/:collection/:sort").get(|r| subreddit::community(r).boxed());
+
+	// JSON API routes for subreddits
+	app.at("/r/:sub.js").get(|r| subreddit::community_json(r).boxed());
+	app.at("/r/:sub/:sort.js").get(|r| subreddit::community_json(r).boxed());
+	app.at("/c/:collection.js").get(|r| subreddit::community_json(r).boxed());
+	app.at("/c/:collection/:sort.js").get(|r| subreddit::community_json(r).boxed());
 
 	app
 		.at("/r/:sub")

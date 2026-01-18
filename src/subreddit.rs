@@ -2,6 +2,7 @@
 
 use crate::{collections, config, utils};
 // CRATES
+use crate::json::{json_error, json_response, SubredditResponse};
 use crate::utils::{
 	catch_random, error, filter_posts, format_num, format_url, get_filters, info, nsfw_landing, param, redirect, rewrite_urls, setting, template, val, Post, Preferences,
 	Subreddit,
@@ -261,6 +262,88 @@ pub async fn add_quarantine_exception(req: Request<Body>) -> Result<Response<Bod
 			.into(),
 	);
 	Ok(response)
+}
+
+/// JSON API endpoint for subreddit/community data.
+pub async fn community_json(req: Request<Body>) -> Result<Response<Body>, String> {
+	let query = req.uri().query().unwrap_or_default().to_string();
+	let subscribed = setting(&req, "subscriptions");
+	let front_page = setting(&req, "front_page");
+	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
+	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
+	let default_front = if front_page == "default" || front_page.is_empty() {
+		if subscribed.is_empty() {
+			"popular".to_string()
+		} else {
+			subscribed.clone()
+		}
+	} else {
+		front_page.clone()
+	};
+
+	let collection_param = req.param("collection");
+	let sub_name = if let Some(sub) = req.param("sub") {
+		sub
+	} else if let Some(alias) = collection_param.clone() {
+		match collections::resolve(&alias) {
+			Some(target) => target,
+			None => return Ok(json_error(format!("Collection \"{alias}\" is not configured"), 404)),
+		}
+	} else {
+		default_front
+	};
+
+	let quarantined = can_access_quarantine(&req, &sub_name);
+
+	// Handle random subreddits - return error for JSON API
+	if sub_name == "random" || sub_name == "randnsfw" {
+		return Ok(json_error("Random subreddits not supported in JSON API".to_string(), 400));
+	}
+
+	// Request subreddit metadata
+	let sub = if !sub_name.contains('+') && sub_name != subscribed && sub_name != "popular" && sub_name != "all" {
+		subreddit(&sub_name, quarantined).await.unwrap_or_default()
+	} else if sub_name == subscribed {
+		Subreddit::default()
+	} else {
+		Subreddit {
+			name: sub_name.clone(),
+			..Subreddit::default()
+		}
+	};
+
+	// Check NSFW gating (server-side SFW_ONLY only)
+	if sub.nsfw && crate::utils::sfw_only() {
+		return Ok(json_error("NSFW content is disabled on this instance".to_string(), 403));
+	}
+
+	let mut params = String::from("&raw_json=1");
+	if sub_name == "popular" {
+		let geo_filter = match GEO_FILTER_MATCH.captures(&query) {
+			Some(geo_filter) => geo_filter["region"].to_string(),
+			None => "GLOBAL".to_owned(),
+		};
+		params.push_str(&format!("&geo_filter={geo_filter}"));
+	}
+
+	let path = format!("/r/{}/{sort}.json?{}{params}", sub_name.replace('+', "%2B"), req.uri().query().unwrap_or_default());
+
+	match Post::fetch(&path, quarantined).await {
+		Ok((posts, after)) => {
+			let response = SubredditResponse {
+				subreddit: sub,
+				posts,
+				after: if after.is_empty() { None } else { Some(after) },
+			};
+			Ok(json_response(response))
+		}
+		Err(msg) => match msg.as_str() {
+			"quarantined" | "gated" => Ok(json_error(format!("r/{sub_name} is {msg}"), 403)),
+			"private" => Ok(json_error(format!("r/{sub_name} is a private community"), 403)),
+			"banned" => Ok(json_error(format!("r/{sub_name} has been banned from Reddit"), 404)),
+			_ => Ok(json_error(msg, 500)),
+		},
+	}
 }
 
 pub fn can_access_quarantine(req: &Request<Body>, sub: &str) -> bool {
