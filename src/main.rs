@@ -368,6 +368,10 @@ async fn main() {
 	app.at("/r/:sub/wiki").get(|r| subreddit::wiki(r).boxed());
 	app.at("/r/:sub/wiki/*page").get(|r| subreddit::wiki(r).boxed());
 
+	// JSON API routes for wiki
+	app.at("/r/:sub/wiki.js").get(|r| subreddit::wiki_json(r).boxed());
+	app.at("/r/:sub/wiki/*page.js").get(|r| subreddit::wiki_json(r).boxed());
+
 	app.at("/r/:sub/about/sidebar").get(|r| subreddit::sidebar(r).boxed());
 
 	app.at("/r/:sub/:sort").get(|r| subreddit::community(r).boxed());
@@ -382,6 +386,8 @@ async fn main() {
 		.get(|r| async move { Ok(redirect(&format!("/wiki/{}", r.param("page").unwrap_or_default()))) }.boxed());
 	app.at("/wiki").get(|r| subreddit::wiki(r).boxed());
 	app.at("/wiki/*page").get(|r| subreddit::wiki(r).boxed());
+	app.at("/wiki.js").get(|r| subreddit::wiki_json(r).boxed());
+	app.at("/wiki/*page.js").get(|r| subreddit::wiki_json(r).boxed());
 
 	// Search all of Reddit
 	app.at("/search").get(|r| search::find(r).boxed());
