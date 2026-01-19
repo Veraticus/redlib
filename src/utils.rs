@@ -402,8 +402,9 @@ pub struct Post {
 }
 
 impl Post {
-	/// Fetch posts of a user or subreddit and return a vector of posts and the "after" value
-	pub async fn fetch(path: &str, quarantine: bool) -> Result<(Vec<Self>, String), String> {
+	/// Fetch posts of a user or subreddit and return a vector of posts and the "after" value.
+	/// If `use_markdown` is true, the body will contain raw markdown instead of HTML.
+	pub async fn fetch(path: &str, quarantine: bool, use_markdown: bool) -> Result<(Vec<Self>, String), String> {
 		// Send a request to the url
 		let res = match json(path.to_string(), quarantine).await {
 			// If success, receive JSON in response
@@ -433,11 +434,14 @@ impl Post {
 			let (post_type, media, gallery) = Media::parse(data).await;
 			let awards = Awards::parse(&data["all_awardings"]);
 
-			// selftext_html is set for text posts when browsing.
-			let mut body = rewrite_urls(&val(post, "selftext_html"));
-			if body.is_empty() {
-				body = rewrite_urls(&val(post, "body_html"));
-			}
+			// For JSON API (use_markdown=true), use raw markdown; for HTML UI, use HTML with URL rewriting
+			let body = if use_markdown {
+				let md = val(post, "selftext");
+				if md.is_empty() { val(post, "body") } else { md }
+			} else {
+				let html = rewrite_urls(&val(post, "selftext_html"));
+				if html.is_empty() { rewrite_urls(&val(post, "body_html")) } else { html }
+			};
 
 			posts.push(Self {
 				id: val(post, "id"),
@@ -837,7 +841,8 @@ pub fn filter_posts(posts: &mut Vec<Post>, filters: &HashSet<String>) -> (u64, b
 }
 
 /// Creates a [`Post`] from a provided JSON.
-pub async fn parse_post(post: &Value) -> Post {
+/// Parse a single post from Reddit's JSON. If `use_markdown` is true, the body will contain raw markdown.
+pub async fn parse_post(post: &Value, use_markdown: bool) -> Post {
 	// Grab UTC time as unix timestamp
 	let (rel_time, created) = time(post["data"]["created_utc"].as_f64().unwrap_or_default());
 	// Parse post score and upvote ratio
@@ -856,10 +861,17 @@ pub async fn parse_post(post: &Value) -> Post {
 	let poll = Poll::parse(&post["data"]["poll_data"]);
 
 	let body = if val(post, "removed_by_category") == "moderator" {
-		format!(
-			"<div class=\"md\"><p>[removed] — <a href=\"https://{}{permalink}\">view removed post</a></p></div>",
-			get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)),
-		)
+		if use_markdown {
+			format!("[removed] — view removed post at https://{}{permalink}",
+				get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)))
+		} else {
+			format!(
+				"<div class=\"md\"><p>[removed] — <a href=\"https://{}{permalink}\">view removed post</a></p></div>",
+				get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)),
+			)
+		}
+	} else if use_markdown {
+		val(post, "selftext")
 	} else {
 		let selftext = val(post, "selftext");
 		if selftext.contains("```") {
@@ -1607,7 +1619,7 @@ fn test_rewriting_emoji() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fetching_subreddit_quarantined() {
-	let subreddit = Post::fetch("/r/drugs", true).await;
+	let subreddit = Post::fetch("/r/drugs", true, false).await;
 	assert!(subreddit.is_ok());
 	assert!(!subreddit.unwrap().0.is_empty());
 }
@@ -1617,14 +1629,14 @@ async fn test_fetching_nsfw_subreddit() {
 	// Gonwild is a place for closed, Euclidean Geometric shapes to exchange their nth terms for karma; showing off their edges in a comfortable environment without pressure.
 	// Find a good sub that is tagged NSFW but that actually isn't in case my future employers are watching (they probably are)
 	// switched from randnsfw as it is no longer functional.
-	let subreddit = Post::fetch("/r/gonwild", false).await;
+	let subreddit = Post::fetch("/r/gonwild", false, false).await;
 	assert!(subreddit.is_ok());
 	assert!(!subreddit.unwrap().0.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fetching_ws() {
-	let subreddit = Post::fetch("/r/popular", false).await;
+	let subreddit = Post::fetch("/r/popular", false, false).await;
 	assert!(subreddit.is_ok());
 	for post in subreddit.unwrap().0 {
 		assert!(post.ws_url.starts_with("wss://k8s-lb.wss.redditmedia.com/link/"));

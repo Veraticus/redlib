@@ -130,7 +130,7 @@ pub async fn find(req: Request<Body>) -> Result<Response<Body>, String> {
 			no_posts: false,
 		}))
 	} else {
-		match Post::fetch(&path, quarantined).await {
+		match Post::fetch(&path, quarantined, false).await {
 			Ok((mut posts, after)) => {
 				let (_, all_posts_filtered) = filter_posts(&mut posts, &filters);
 				let no_posts = posts.is_empty();
@@ -194,7 +194,7 @@ pub async fn find_json(req: Request<Body>) -> Result<Response<Body>, String> {
 		return Ok(json_error("Subreddit search not supported in JSON API, use post search".to_string(), 400));
 	}
 
-	match Post::fetch(&path, quarantined).await {
+	match Post::fetch(&path, quarantined, true).await {
 		Ok((mut posts, after)) => {
 			// Truncate post bodies for list response
 			truncate_posts(&mut posts, body_limit);

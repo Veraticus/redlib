@@ -199,7 +199,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			collection_subreddits: collection_subreddits.clone(),
 		}))
 	} else {
-		match Post::fetch(&path, quarantined).await {
+		match Post::fetch(&path, quarantined, false).await {
 			Ok((mut posts, after)) => {
 				let (_, all_posts_filtered) = filter_posts(&mut posts, &filters);
 				let no_posts = posts.is_empty();
@@ -333,7 +333,7 @@ pub async fn community_json(req: Request<Body>) -> Result<Response<Body>, String
 		.and_then(|s| s.parse().ok())
 		.or(Some(DEFAULT_BODY_LIMIT));
 
-	match Post::fetch(&path, quarantined).await {
+	match Post::fetch(&path, quarantined, true).await {
 		Ok((mut posts, after)) => {
 			// Truncate post bodies for list response
 			truncate_posts(&mut posts, body_limit);
@@ -769,7 +769,7 @@ pub async fn rss(req: Request<Body>) -> Result<Response<Body>, String> {
 	let subreddit = subreddit(&sub, false).await?;
 
 	// Get posts
-	let (posts, _) = Post::fetch(&path, false).await?;
+	let (posts, _) = Post::fetch(&path, false, false).await?;
 
 	// Build the RSS feed
 	let channel = ChannelBuilder::default()

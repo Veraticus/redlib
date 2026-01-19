@@ -70,7 +70,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 		// Otherwise, grab the JSON output from the request
 		Ok(response) => {
 			// Parse the JSON into Post and Comment structs
-			let post = parse_post(&response[0]["data"]["children"][0]).await;
+			let post = parse_post(&response[0]["data"]["children"][0], false).await;
 
 			let req_url = req.uri().to_string();
 			// Return landing page if this post if this Reddit deems this post
@@ -145,7 +145,7 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 
 	match json(path, quarantined).await {
 		Ok(response) => {
-			let post = parse_post(&response[0]["data"]["children"][0]).await;
+			let post = parse_post(&response[0]["data"]["children"][0], true).await;
 
 			// Check NSFW gating (server-side SFW_ONLY only)
 			if post.nsfw && crate::utils::sfw_only() {
@@ -153,8 +153,8 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 
 			let filters = get_filters(&req);
-			// Use depth-limited parsing for JSON API
-			let comments = parse_comments_with_depth(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &req, 0, max_depth);
+			// Use depth-limited parsing for JSON API (with markdown bodies)
+			let comments = parse_comments_with_depth(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &req, 0, max_depth, true);
 
 			Ok(json_response(PostResponse { post, comments }))
 		}
@@ -184,13 +184,14 @@ fn parse_comments(json: &serde_json::Value, post_link: &str, post_author: &str, 
 			} else {
 				Vec::new()
 			};
-			build_comment(&comment, data, replies, post_link, post_author, highlighted_comment, filters, req)
+			build_comment(&comment, data, replies, post_link, post_author, highlighted_comment, filters, req, false)
 		})
 		.collect()
 }
 
 /// Parse comments with depth limiting for JSON API.
 /// Stops recursing when current_depth >= max_depth.
+/// If `use_markdown` is true, comment bodies will contain raw markdown instead of HTML.
 #[allow(clippy::too_many_arguments)]
 fn parse_comments_with_depth(
 	json: &serde_json::Value,
@@ -201,6 +202,7 @@ fn parse_comments_with_depth(
 	req: &Request<Body>,
 	current_depth: usize,
 	max_depth: usize,
+	use_markdown: bool,
 ) -> Vec<Comment> {
 	let comments = json["data"]["children"].as_array().map_or(Vec::new(), std::borrow::ToOwned::to_owned);
 
@@ -210,11 +212,11 @@ fn parse_comments_with_depth(
 			let data = &comment["data"];
 			// Only recurse if we haven't hit max depth
 			let replies: Vec<Comment> = if current_depth < max_depth && data["replies"].is_object() {
-				parse_comments_with_depth(&data["replies"], post_link, post_author, highlighted_comment, filters, req, current_depth + 1, max_depth)
+				parse_comments_with_depth(&data["replies"], post_link, post_author, highlighted_comment, filters, req, current_depth + 1, max_depth, use_markdown)
 			} else {
 				Vec::new()
 			};
-			build_comment(&comment, data, replies, post_link, post_author, highlighted_comment, filters, req)
+			build_comment(&comment, data, replies, post_link, post_author, highlighted_comment, filters, req, use_markdown)
 		})
 		.collect()
 }
@@ -239,7 +241,7 @@ fn query_comments(
 			results.append(&mut query_comments(&data["replies"], post_link, post_author, highlighted_comment, filters, query, req));
 		}
 
-		let c = build_comment(&comment, data, Vec::new(), post_link, post_author, highlighted_comment, filters, req);
+		let c = build_comment(&comment, data, Vec::new(), post_link, post_author, highlighted_comment, filters, req, false);
 		if c.body.to_lowercase().contains(&query.to_lowercase()) {
 			results.push(c);
 		}
@@ -257,14 +259,22 @@ fn build_comment(
 	highlighted_comment: &str,
 	filters: &HashSet<String>,
 	req: &Request<Body>,
+	use_markdown: bool,
 ) -> Comment {
 	let id = val(comment, "id");
 
 	let body = if (val(comment, "author") == "[deleted]" && val(comment, "body") == "[removed]") || val(comment, "body") == "[ Removed by Reddit ]" {
-		format!(
-			"<div class=\"md\"><p>[removed] — <a href=\"https://{}{post_link}{id}\">view removed comment</a></p></div>",
-			get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)),
-		)
+		if use_markdown {
+			format!("[removed] — view removed comment at https://{}{post_link}{id}",
+				get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)))
+		} else {
+			format!(
+				"<div class=\"md\"><p>[removed] — <a href=\"https://{}{post_link}{id}\">view removed comment</a></p></div>",
+				get_setting("REDLIB_PUSHSHIFT_FRONTEND").unwrap_or_else(|| String::from(crate::config::DEFAULT_PUSHSHIFT_FRONTEND)),
+			)
+		}
+	} else if use_markdown {
+		val(comment, "body")
 	} else {
 		rewrite_emotes(&data["media_metadata"], val(comment, "body_html"))
 	};

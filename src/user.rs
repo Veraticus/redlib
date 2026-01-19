@@ -81,7 +81,7 @@ pub async fn profile(req: Request<Body>) -> Result<Response<Body>, String> {
 		}))
 	} else {
 		// Request user posts/comments from Reddit
-		match Post::fetch(&path, false).await {
+		match Post::fetch(&path, false, false).await {
 			Ok((mut posts, after)) => {
 				let (_, all_posts_filtered) = filter_posts(&mut posts, &filters);
 				let no_posts = posts.is_empty();
@@ -130,7 +130,7 @@ pub async fn profile_json(req: Request<Body>) -> Result<Response<Body>, String> 
 		return Ok(json_error("NSFW content is disabled on this instance".to_string(), 403));
 	}
 
-	match Post::fetch(&path, false).await {
+	match Post::fetch(&path, false, true).await {
 		Ok((mut posts, after)) => {
 			// Truncate post bodies for list response
 			truncate_posts(&mut posts, body_limit);
@@ -193,7 +193,7 @@ pub async fn rss(req: Request<Body>) -> Result<Response<Body>, String> {
 	let user_obj = user(&user_str).await.unwrap_or_default();
 
 	// Get posts
-	let (posts, _) = Post::fetch(&path, false).await?;
+	let (posts, _) = Post::fetch(&path, false, false).await?;
 
 	// Build the RSS feed
 	let channel = ChannelBuilder::default()
