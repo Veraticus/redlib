@@ -3,7 +3,28 @@
 use hyper::{Body, Response};
 use serde::Serialize;
 
-use crate::utils::{Comment, Post, Subreddit, User};
+use crate::utils::{truncate_body, Comment, Post, Subreddit, User};
+
+/// Default body truncation limit for list endpoints (search, subreddit, user, duplicates)
+pub const DEFAULT_BODY_LIMIT: usize = 400;
+
+/// Truncate body of a single post if body_limit is specified.
+pub fn truncate_post(post: &mut Post, body_limit: Option<usize>) {
+	if let Some(limit) = body_limit {
+		let (truncated_body, was_truncated) = truncate_body(&post.body, limit);
+		post.body = truncated_body;
+		if was_truncated {
+			post.body_truncated = Some(true);
+		}
+	}
+}
+
+/// Truncate bodies of multiple posts.
+pub fn truncate_posts(posts: &mut [Post], body_limit: Option<usize>) {
+	for post in posts.iter_mut() {
+		truncate_post(post, body_limit);
+	}
+}
 
 /// Wrapper for all JSON API responses.
 #[derive(Serialize)]

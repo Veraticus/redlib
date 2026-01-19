@@ -1,10 +1,10 @@
 //! Handler for post duplicates.
 
 use crate::client::json;
-use crate::json::{json_error, json_response, DuplicatesResponse};
+use crate::json::{json_error, json_response, truncate_posts, DuplicatesResponse, DEFAULT_BODY_LIMIT};
 use crate::server::RequestExt;
 use crate::subreddit::{can_access_quarantine, quarantine};
-use crate::utils::{error, filter_posts, get_filters, nsfw_landing, parse_post, template, Post, Preferences};
+use crate::utils::{error, filter_posts, get_filters, nsfw_landing, param, parse_post, template, Post, Preferences};
 
 use askama::Template;
 use hyper::{Body, Request, Response};
@@ -227,6 +227,11 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 	let sub = req.param("sub").unwrap_or_default();
 	let quarantined = can_access_quarantine(&req, &sub);
 
+	// Parse body_limit param (default: 400 chars for duplicates list)
+	let body_limit: Option<usize> = param(&path, "body_limit")
+		.and_then(|s| s.parse().ok())
+		.or(Some(DEFAULT_BODY_LIMIT));
+
 	match json(path, quarantined).await {
 		Ok(response) => {
 			let post = parse_post(&response[0]["data"]["children"][0]).await;
@@ -237,7 +242,10 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 
 			let filters = get_filters(&req);
-			let (duplicates, _, _) = parse_duplicates(&response[1], &filters).await;
+			let (mut duplicates, _, _) = parse_duplicates(&response[1], &filters).await;
+
+			// Truncate duplicate post bodies (but keep original post full)
+			truncate_posts(&mut duplicates, body_limit);
 
 			Ok(json_response(DuplicatesResponse { post, duplicates }))
 		}

@@ -1,6 +1,6 @@
 #![allow(clippy::cmp_owned)]
 use crate::client::json;
-use crate::json::{json_error, json_response, UserResponse};
+use crate::json::{json_error, json_response, truncate_posts, UserResponse, DEFAULT_BODY_LIMIT};
 use crate::server::RequestExt;
 use crate::utils::{error, filter_posts, format_url, get_filters, nsfw_landing, param, setting, template, Post, Preferences, User};
 use crate::{config, utils};
@@ -115,6 +115,11 @@ pub async fn profile_json(req: Request<Body>) -> Result<Response<Body>, String> 
 		req.uri().query().unwrap_or_default(),
 	);
 
+	// Parse body_limit param (default: 400 chars)
+	let body_limit: Option<usize> = param(&path, "body_limit")
+		.and_then(|s| s.parse().ok())
+		.or(Some(DEFAULT_BODY_LIMIT));
+
 	let username = req.param("name").unwrap_or_default();
 	let user = user(&username).await.unwrap_or_default();
 
@@ -124,7 +129,9 @@ pub async fn profile_json(req: Request<Body>) -> Result<Response<Body>, String> 
 	}
 
 	match Post::fetch(&path, false).await {
-		Ok((posts, after)) => {
+		Ok((mut posts, after)) => {
+			// Truncate post bodies for list response
+			truncate_posts(&mut posts, body_limit);
 			let response = UserResponse {
 				user,
 				posts,
