@@ -66,7 +66,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 	match json(path, quarantined).await {
 		// Process response JSON.
 		Ok(response) => {
-			let post = parse_post(&response[0]["data"]["children"][0]).await;
+			let post = parse_post(&response[0]["data"]["children"][0], false).await;
 
 			let req_url = req.uri().to_string();
 			// Return landing page if this post if this Reddit deems this post
@@ -77,7 +77,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 
 			let filters = get_filters(&req);
-			let (duplicates, num_posts_filtered, all_posts_filtered) = parse_duplicates(&response[1], &filters).await;
+			let (duplicates, num_posts_filtered, all_posts_filtered) = parse_duplicates(&response[1], &filters, false).await;
 
 			// These are the values for the "before=", "after=", and "sort="
 			// query params, respectively.
@@ -234,7 +234,7 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 
 	match json(path, quarantined).await {
 		Ok(response) => {
-			let post = parse_post(&response[0]["data"]["children"][0]).await;
+			let post = parse_post(&response[0]["data"]["children"][0], true).await;
 
 			// Check NSFW gating (server-side SFW_ONLY only)
 			if post.nsfw && crate::utils::sfw_only() {
@@ -242,7 +242,7 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 
 			let filters = get_filters(&req);
-			let (mut duplicates, _, _) = parse_duplicates(&response[1], &filters).await;
+			let (mut duplicates, _, _) = parse_duplicates(&response[1], &filters, true).await;
 
 			// Truncate duplicate post bodies (but keep original post full)
 			truncate_posts(&mut duplicates, body_limit);
@@ -260,13 +260,13 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 }
 
 // DUPLICATES
-async fn parse_duplicates(json: &Value, filters: &HashSet<String>) -> (Vec<Post>, u64, bool) {
+async fn parse_duplicates(json: &Value, filters: &HashSet<String>, use_markdown: bool) -> (Vec<Post>, u64, bool) {
 	let post_duplicates: &Vec<Value> = &json["data"]["children"].as_array().map_or(Vec::new(), ToOwned::to_owned);
 	let mut duplicates: Vec<Post> = Vec::new();
 
 	// Process each post and place them in the Vec<Post>.
 	for val in post_duplicates {
-		let post: Post = parse_post(val).await;
+		let post: Post = parse_post(val, use_markdown).await;
 		duplicates.push(post);
 	}
 
