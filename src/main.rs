@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 use futures_lite::FutureExt;
 use hyper::Uri;
 use hyper::{header::HeaderValue, Body, Request, Response};
-use log::{info, warn};
-use redlib::client::{canonical_path, proxy, rate_limit_check, CLIENT};
+use log::info;
+use redlib::client::{canonical_path, proxy, CLIENT};
 use redlib::server::{self, RequestExt};
 use redlib::utils::{error, redirect, ThemeAssets};
 use redlib::{config, duplicates, headers, instance_info, post, search, settings, subreddit, user};
@@ -158,20 +158,6 @@ async fn main() {
 				.num_args(1),
 		)
 		.get_matches();
-
-	match rate_limit_check().await {
-		Ok(()) => {
-			info!("[✅] Rate limit check passed");
-		}
-		Err(e) => {
-			let mut message = format!("Rate limit check failed: {e}");
-			message += "\nThis may cause issues with the rate limit.";
-			message += "\nPlease report this error with the above information.";
-			message += "\nhttps://github.com/redlib-org/redlib/issues/new?assignees=sigaloid&labels=bug&title=%F0%9F%90%9B+Bug+Report%3A+Rate+limit+mismatch";
-			warn!("{}", message);
-			eprintln!("{message}");
-		}
-	}
 
 	let address = matches.get_one::<String>("address").unwrap();
 	let port = matches.get_one::<String>("port").unwrap();
