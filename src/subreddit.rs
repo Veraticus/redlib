@@ -2,7 +2,7 @@
 
 use crate::{collections, config, utils};
 // CRATES
-use crate::json::{json_error, json_response, SubredditResponse, WikiResponse};
+use crate::json::{json_error, json_response, truncate_posts, SubredditResponse, WikiResponse, DEFAULT_BODY_LIMIT};
 use crate::utils::{
 	catch_random, error, filter_posts, format_num, format_url, get_filters, info, nsfw_landing, param, redirect, rewrite_urls, setting, template, val, Post, Preferences,
 	Subreddit,
@@ -328,8 +328,15 @@ pub async fn community_json(req: Request<Body>) -> Result<Response<Body>, String
 
 	let path = format!("/r/{}/{sort}.json?{}{params}", sub_name.replace('+', "%2B"), req.uri().query().unwrap_or_default());
 
+	// Parse body_limit param (default: 400 chars)
+	let body_limit: Option<usize> = param(&path, "body_limit")
+		.and_then(|s| s.parse().ok())
+		.or(Some(DEFAULT_BODY_LIMIT));
+
 	match Post::fetch(&path, quarantined).await {
-		Ok((posts, after)) => {
+		Ok((mut posts, after)) => {
+			// Truncate post bodies for list response
+			truncate_posts(&mut posts, body_limit);
 			let response = SubredditResponse {
 				subreddit: sub,
 				posts,

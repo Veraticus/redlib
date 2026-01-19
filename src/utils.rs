@@ -26,6 +26,50 @@ use std::sync::LazyLock;
 use time::{macros::format_description, Duration, OffsetDateTime};
 use url::Url;
 
+// HTML processing for JSON API responses
+
+static HTML_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
+static HTML_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!--.*?-->").unwrap());
+
+/// Strip HTML tags from a string, returning plain text.
+pub fn strip_html(s: &str) -> String {
+	// Remove HTML comments first (like <!-- SC_OFF -->)
+	let s = HTML_COMMENT_REGEX.replace_all(s, "");
+	// Remove all HTML tags
+	let s = HTML_TAG_REGEX.replace_all(&s, "");
+	// Decode HTML entities
+	decode_html_entities(&s)
+}
+
+/// Decode common HTML entities to their character equivalents.
+pub fn decode_html_entities(s: &str) -> String {
+	s.replace("&amp;", "&")
+		.replace("&lt;", "<")
+		.replace("&gt;", ">")
+		.replace("&quot;", "\"")
+		.replace("&#39;", "'")
+		.replace("&#x27;", "'")
+		.replace("&apos;", "'")
+		.replace("&nbsp;", " ")
+		.replace("&#x200B;", "") // zero-width space
+		.replace("\n\n", "\n") // collapse double newlines
+		.trim()
+		.to_string()
+}
+
+/// Truncate a string to a maximum length, returning the truncated string and whether it was truncated.
+pub fn truncate_body(s: &str, limit: usize) -> (String, bool) {
+	let stripped = strip_html(s);
+	if stripped.len() <= limit {
+		(stripped, false)
+	} else {
+		// Try to break at a word boundary
+		let truncated = &stripped[..limit];
+		let break_point = truncated.rfind(' ').unwrap_or(limit);
+		(format!("{}...", &stripped[..break_point]), true)
+	}
+}
+
 /// Write a message to stderr on debug mode. This function is a no-op on
 /// release code.
 #[macro_export]
@@ -330,6 +374,9 @@ pub struct Post {
 	pub title: String,
 	pub community: String,
 	pub body: String,
+	/// Only present in JSON API responses when body was truncated
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub body_truncated: Option<bool>,
 	pub author: Author,
 	pub permalink: String,
 	pub link_title: String,
@@ -397,6 +444,7 @@ impl Post {
 				title,
 				community: val(post, "subreddit"),
 				body,
+				body_truncated: None,
 				author: Author {
 					name: val(post, "author"),
 					flair: Flair {
@@ -830,6 +878,7 @@ pub async fn parse_post(post: &Value) -> Post {
 		title: val(post, "title"),
 		community: val(post, "subreddit"),
 		body,
+		body_truncated: None,
 		author: Author {
 			name: val(post, "author"),
 			flair: Flair {

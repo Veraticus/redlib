@@ -4,6 +4,11 @@
 use crate::client::json;
 use crate::config::get_setting;
 use crate::json::{json_error, json_response, PostResponse};
+
+/// Default maximum comment depth for JSON API
+pub const DEFAULT_COMMENT_DEPTH: usize = 5;
+/// Default maximum number of top-level comments for JSON API
+pub const DEFAULT_COMMENT_LIMIT: usize = 30;
 use crate::server::RequestExt;
 use crate::subreddit::{can_access_quarantine, quarantine};
 use crate::utils::{
@@ -115,7 +120,24 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 
 /// JSON API endpoint for post data.
 pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
-	let path: String = format!("{}.json?{}&raw_json=1", req.uri().path().trim_end_matches(".js"), req.uri().query().unwrap_or_default());
+	let query = req.uri().query().unwrap_or_default();
+
+	// Parse depth and limit params
+	let max_depth: usize = param(&format!("?{query}"), "depth")
+		.and_then(|s| s.parse().ok())
+		.unwrap_or(DEFAULT_COMMENT_DEPTH);
+	let limit: usize = param(&format!("?{query}"), "limit")
+		.and_then(|s| s.parse().ok())
+		.unwrap_or(DEFAULT_COMMENT_LIMIT);
+
+	// Build path with depth and limit for Reddit API
+	let path: String = format!(
+		"{}.json?{}&raw_json=1&depth={}&limit={}",
+		req.uri().path().trim_end_matches(".js"),
+		query,
+		max_depth,
+		limit
+	);
 	let sub = req.param("sub").unwrap_or_default();
 	let quarantined = can_access_quarantine(&req, &sub);
 
@@ -131,7 +153,8 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 
 			let filters = get_filters(&req);
-			let comments = parse_comments(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &req);
+			// Use depth-limited parsing for JSON API
+			let comments = parse_comments_with_depth(&response[1], &post.permalink, &post.author.name, highlighted_comment, &filters, &req, 0, max_depth);
 
 			Ok(json_response(PostResponse { post, comments }))
 		}
@@ -158,6 +181,36 @@ fn parse_comments(json: &serde_json::Value, post_link: &str, post_author: &str, 
 			let data = &comment["data"];
 			let replies: Vec<Comment> = if data["replies"].is_object() {
 				parse_comments(&data["replies"], post_link, post_author, highlighted_comment, filters, req)
+			} else {
+				Vec::new()
+			};
+			build_comment(&comment, data, replies, post_link, post_author, highlighted_comment, filters, req)
+		})
+		.collect()
+}
+
+/// Parse comments with depth limiting for JSON API.
+/// Stops recursing when current_depth >= max_depth.
+#[allow(clippy::too_many_arguments)]
+fn parse_comments_with_depth(
+	json: &serde_json::Value,
+	post_link: &str,
+	post_author: &str,
+	highlighted_comment: &str,
+	filters: &HashSet<String>,
+	req: &Request<Body>,
+	current_depth: usize,
+	max_depth: usize,
+) -> Vec<Comment> {
+	let comments = json["data"]["children"].as_array().map_or(Vec::new(), std::borrow::ToOwned::to_owned);
+
+	comments
+		.into_iter()
+		.map(|comment| {
+			let data = &comment["data"];
+			// Only recurse if we haven't hit max depth
+			let replies: Vec<Comment> = if current_depth < max_depth && data["replies"].is_object() {
+				parse_comments_with_depth(&data["replies"], post_link, post_author, highlighted_comment, filters, req, current_depth + 1, max_depth)
 			} else {
 				Vec::new()
 			};

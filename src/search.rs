@@ -1,7 +1,7 @@
 #![allow(clippy::cmp_owned)]
 
 // CRATES
-use crate::json::{json_error, json_response, SearchResponse};
+use crate::json::{json_error, json_response, truncate_posts, SearchResponse, DEFAULT_BODY_LIMIT};
 use crate::utils::{self, catch_random, error, filter_posts, format_num, format_url, get_filters, param, redirect, setting, template, val, Post, Preferences};
 use crate::{
 	client::json,
@@ -179,6 +179,11 @@ pub async fn find_json(req: Request<Body>) -> Result<Response<Body>, String> {
 		return Ok(json_error("Search query is required".to_string(), 400));
 	}
 
+	// Parse body_limit param (default: 400 chars)
+	let body_limit: Option<usize> = param(&path, "body_limit")
+		.and_then(|s| s.parse().ok())
+		.or(Some(DEFAULT_BODY_LIMIT));
+
 	let sub = req.param("sub").unwrap_or_default();
 	let quarantined = can_access_quarantine(&req, &sub);
 
@@ -190,7 +195,9 @@ pub async fn find_json(req: Request<Body>) -> Result<Response<Body>, String> {
 	}
 
 	match Post::fetch(&path, quarantined).await {
-		Ok((posts, after)) => {
+		Ok((mut posts, after)) => {
+			// Truncate post bodies for list response
+			truncate_posts(&mut posts, body_limit);
 			let response = SearchResponse {
 				posts,
 				after: if after.is_empty() { None } else { Some(after) },
