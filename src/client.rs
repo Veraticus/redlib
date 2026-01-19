@@ -5,16 +5,10 @@ use futures_lite::{future::Boxed, FutureExt};
 use hyper::client::HttpConnector;
 use hyper::header::HeaderValue;
 use hyper::{body, body::Buf, header, Body, Client, Method, Request, Response, Uri};
-use hyper_rustls::HttpsConnector;
+use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use libflate::gzip;
 use log::{error, trace, warn};
 use percent_encoding::{percent_encode, CONTROLS};
-use rustls::cipher_suite::{
-	TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256, TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-};
-use rustls::{ClientConfig, RootCertStore};
 use serde_json::Value;
 
 use std::sync::atomic::Ordering;
@@ -23,9 +17,9 @@ use std::sync::LazyLock;
 use std::{io, result::Result};
 
 use crate::dbg_msg;
-use crate::oauth::{force_refresh_token, token_daemon, Oauth};
+use crate::oauth::{force_refresh_token, token_daemon, Oauth, OauthBackendImpl};
 use crate::server::RequestExt;
-use crate::utils::format_url;
+use crate::utils::{format_url, Post};
 
 const REDDIT_URL_BASE: &str = "https://oauth.reddit.com";
 const REDDIT_URL_BASE_HOST: &str = "oauth.reddit.com";
@@ -36,38 +30,32 @@ const REDDIT_SHORT_URL_BASE_HOST: &str = "redd.it";
 const ALTERNATIVE_REDDIT_URL_BASE: &str = "https://www.reddit.com";
 const ALTERNATIVE_REDDIT_URL_BASE_HOST: &str = "www.reddit.com";
 
-// Firefox-like TLS cipher suites to avoid fingerprinting
-fn create_tls_config() -> ClientConfig {
-	let mut root_store = RootCertStore::empty();
-	root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-		rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(ta.subject, ta.spki, ta.name_constraints)
-	}));
-
-	ClientConfig::builder()
-		.with_cipher_suites(&[
-			// TLS 1.3 suites
-			TLS13_AES_256_GCM_SHA384,
-			TLS13_AES_128_GCM_SHA256,
-			TLS13_CHACHA20_POLY1305_SHA256,
-			// TLS 1.2 suites
-			TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-			TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-			TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		])
-		.with_safe_default_kx_groups()
-		.with_safe_default_protocol_versions()
-		.expect("Failed to set TLS protocol versions")
-		.with_root_certificates(root_store)
-		.with_no_client_auth()
-}
-
 pub static HTTPS_CONNECTOR: LazyLock<HttpsConnector<HttpConnector>> = LazyLock::new(|| {
-	let tls_config = create_tls_config();
 	hyper_rustls::HttpsConnectorBuilder::new()
-		.with_tls_config(tls_config)
+		.with_tls_config(
+			rustls::ClientConfig::builder()
+				// These are the Firefox 145.0 cipher suite,
+				// minus the suites missing forward-secrecy support,
+				// in the same order.
+				// https://github.com/redlib-org/redlib/issues/446#issuecomment-3609306592
+				.with_cipher_suites(&[
+					rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
+					rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+					rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+					rustls::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+					rustls::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+					rustls::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+					rustls::cipher_suite::TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+					rustls::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					rustls::cipher_suite::TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				])
+				// .with_safe_default_cipher_suites()
+				.with_safe_default_kx_groups()
+				.with_safe_default_protocol_versions()
+				.unwrap()
+				.with_native_roots()
+				.with_no_client_auth(),
+		)
 		.https_only()
 		.enable_http2()
 		.build()
@@ -524,9 +512,48 @@ pub async fn json(path: String, quarantine: bool) -> Result<Value, String> {
 	}
 }
 
+async fn self_check(sub: &str) -> Result<(), String> {
+	let query = format!("/r/{sub}/hot.json?&raw_json=1");
+
+	match Post::fetch(&query, true, false).await {
+		Ok(_) => Ok(()),
+		Err(e) => Err(e),
+	}
+}
+
+pub async fn rate_limit_check() -> Result<(), String> {
+	// First, test the Oauth client: we can perform a rate limit check if the OAuth backend is MobileSpoof; if GenericWeb, we skip the check.
+	if matches!(OAUTH_CLIENT.load().backend, OauthBackendImpl::GenericWeb(_)) {
+		warn!("[⚠️] Cannot perform rate limit check, running as GenericWeb. Skipping check.");
+		return Ok(());
+	}
+
+	// First, check a subreddit.
+	self_check("reddit").await?;
+	// This will reduce the rate limit to 99. Assert this check.
+	if OAUTH_RATELIMIT_REMAINING.load(Ordering::SeqCst) != 99 {
+		return Err(format!("Rate limit check 1 failed: expected 99, got {}", OAUTH_RATELIMIT_REMAINING.load(Ordering::SeqCst)));
+	}
+	// Now, we switch out the OAuth client.
+	// This checks for the IP rate limit association.
+	force_refresh_token().await;
+	// Now, check a new sub to break cache.
+	self_check("rust").await?;
+	// Again, assert the rate limit check.
+	if OAUTH_RATELIMIT_REMAINING.load(Ordering::SeqCst) != 99 {
+		return Err(format!("Rate limit check 2 failed: expected 99, got {}", OAUTH_RATELIMIT_REMAINING.load(Ordering::SeqCst)));
+	}
+
+	Ok(())
+}
 
 #[cfg(test)]
 use {crate::config::get_setting, sealed_test::prelude::*};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rate_limit_check() {
+	rate_limit_check().await.unwrap();
+}
 
 #[test]
 #[sealed_test(env = [("REDLIB_DEFAULT_SUBSCRIPTIONS", "rust")])]
@@ -534,6 +561,9 @@ fn test_default_subscriptions() {
 	tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async {
 		let subscriptions = get_setting("REDLIB_DEFAULT_SUBSCRIPTIONS");
 		assert!(subscriptions.is_some());
+
+		// check rate limit
+		rate_limit_check().await.unwrap();
 	});
 }
 
