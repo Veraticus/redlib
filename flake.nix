@@ -24,7 +24,7 @@
 
         inherit (pkgs) lib;
 
-        rustToolchain = pkgs.rust-bin.stable."1.83.0".default.override {
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           targets = [ "x86_64-unknown-linux-musl" ];
         };
 
@@ -44,6 +44,14 @@
           strictDeps = true;
           doCheck = false;
 
+          nativeBuildInputs = [
+            pkgs.pkg-config
+            pkgs.cmake
+            pkgs.perl
+            pkgs.libclang
+          ];
+
+          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
           CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
         };
@@ -67,7 +75,14 @@
             rustToolchain
             pkgs.pkg-config
             pkgs.openssl
+            pkgs.cmake
+            pkgs.perl
+            pkgs.clang
           ];
+          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+          BINDGEN_EXTRA_CLANG_ARGS =
+            "-isystem ${pkgs.glibc.dev}/include "
+            + "-isystem ${pkgs.libclang.lib}/lib/clang/${lib.versions.major pkgs.libclang.version}/include";
         };
       });
 }
