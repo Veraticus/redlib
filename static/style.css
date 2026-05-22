@@ -1591,6 +1591,18 @@ a.search_subreddit:hover {
 
 summary.comment_data {
     cursor: pointer;
+    padding: 2px 6px;
+    margin-left: -6px;
+    border-radius: 4px;
+    transition: background 120ms ease;
+}
+
+summary.comment_data:hover {
+    background: var(--highlighted);
+}
+
+summary.comment_data::marker {
+    font-size: 18px;
 }
 
 .user_comment_data_divider {
