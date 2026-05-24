@@ -62,6 +62,22 @@ struct WallTemplate {
 
 static GEO_FILTER_MATCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"geo_filter=(?<region>\w+)").unwrap());
 
+/// Reddit's multireddit URL endpoint caps at ~100 subs. Stay under that.
+const HOME_FEED_SAMPLE_SIZE: usize = 100;
+
+/// Build a `+`-joined multireddit string from a random sample of every
+/// subreddit configured across every collection. Returns `None` when no
+/// collections are configured.
+fn sample_home_from_collections() -> Option<String> {
+	let mut all = collections::all_subs_unique();
+	if all.is_empty() {
+		return None;
+	}
+	fastrand::shuffle(&mut all);
+	all.truncate(HOME_FEED_SAMPLE_SIZE);
+	Some(all.join("+"))
+}
+
 // SERVICES
 pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	// Build Reddit API path
@@ -72,8 +88,17 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let remove_default_feeds = setting(&req, "remove_default_feeds") == "on";
 	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
 	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
+	let home_from_collections = config::get_setting("REDLIB_HOME_FROM_COLLECTIONS").as_deref() == Some("on");
 	let default_front = if front_page == "default" || front_page.is_empty() {
-		if subscribed.is_empty() {
+		if root && home_from_collections {
+			if let Some(sample) = sample_home_from_collections() {
+				sample
+			} else if subscribed.is_empty() {
+				"popular".to_string()
+			} else {
+				subscribed.clone()
+			}
+		} else if subscribed.is_empty() {
 			"popular".to_string()
 		} else {
 			subscribed.clone()

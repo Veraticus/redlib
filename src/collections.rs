@@ -36,6 +36,27 @@ pub fn is_empty() -> bool {
 	COLLECTIONS.is_empty()
 }
 
+/// Returns the deduplicated set of subreddit names across every configured
+/// collection, with any `r/` prefix stripped. Names are sorted for stable
+/// output.
+pub fn all_subs_unique() -> Vec<String> {
+	let mut seen = std::collections::BTreeSet::new();
+	for target in COLLECTIONS.values() {
+		for entry in target.split('+') {
+			let trimmed = entry.trim();
+			if trimmed.is_empty() {
+				continue;
+			}
+			let name = trimmed.strip_prefix("r/").unwrap_or(trimmed);
+			if name.is_empty() {
+				continue;
+			}
+			seen.insert(name.to_string());
+		}
+	}
+	seen.into_iter().collect()
+}
+
 fn parse_collection_map(value: Option<String>) -> HashMap<String, String> {
 	let mut map = HashMap::new();
 	let Some(value) = value else {
