@@ -4,8 +4,59 @@ user.name.replace("u/", "") }} (u/{{ user.name }}) - Redlib{% endblock %} {%
 block subscriptions %} {% call utils::sub_list("", "") %} {% endblock %} {% block
 body %}
 <main>
-    {% if !is_filtered %}
     <div id="column_one">
+        {% if is_filtered || (!user.name.is_empty() && prefs.hide_sidebar_and_summary != "on") %}
+        {% let name = ["u_", user.name.as_str()].join("") %}
+        <header class="sub_bar">
+            {% if is_filtered %}
+            <p class="filter_notice">(Content from u/{{ user.name }} has been filtered)</p>
+            {% endif %}
+            {% if !user.name.is_empty() %}
+            <div class="sub_bar_identity">
+                <img loading="lazy" class="sub_bar_icon" src="{{ user.icon }}" alt="Icon for u/{{ user.name }}">
+                <a class="sub_bar_name" href="/u/{{ user.name }}">u/{{ user.name }}</a>
+                <span class="sub_bar_meta">{{ user.karma }} karma · created {{ user.created }}</span>
+            </div>
+            <div class="sub_bar_actions">
+                {% if prefs.subscriptions.contains(name) %}
+                    <form action="/r/{{ name }}/unsubscribe?redirect={{ redirect_url }}" method="POST">
+                        <button class="unsubscribe">Unfollow</button>
+                    </form>
+                {% else %}
+                    <form action="/r/{{ name }}/subscribe?redirect={{ redirect_url }}" method="POST">
+                        <button class="subscribe">Follow</button>
+                    </form>
+                {% endif %}
+                {% if prefs.filters.contains(name) %}
+                    <form action="/r/{{ name }}/unfilter?redirect={{ redirect_url }}" method="POST">
+                        <button class="unfilter">Unfilter</button>
+                    </form>
+                {% else %}
+                    <form action="/r/{{ name }}/filter?redirect={{ redirect_url }}" method="POST">
+                        <button class="filter">Filter</button>
+                    </form>
+                {% endif %}
+                {% if crate::utils::enable_rss() %}
+                    <a href="/u/{{ user.name }}.rss" title="RSS feed for u/{{ user.name }}">
+                        <button class="subscribe">RSS</button>
+                    </a>
+                {% endif %}
+            </div>
+            {% if !user.title.is_empty() || !user.description.is_empty() %}
+            <details class="sub_bar_about">
+                <summary>About u/{{ user.name }}</summary>
+                {% if !user.title.is_empty() %}
+                <h2 class="sub_bar_title">{{ user.title }}</h2>
+                {% endif %}
+                {% if !user.description.is_empty() %}
+                <div class="sub_bar_description">{{ user.description }}</div>
+                {% endif %}
+            </details>
+            {% endif %}
+            {% endif %}
+        </header>
+        {% endif %}
+        {% if !is_filtered %}
         <form id="sort">
             <div id="listing_options">
                 {% call utils::sort(["/user/", user.name.as_str()].concat(),
@@ -103,76 +154,7 @@ body %}
             >
             {% endif %}
         </footer>
-    </div>
-    {% endif %}
-    <aside>
-        {% if is_filtered %}
-        <center>(Content from u/{{ user.name }} has been filtered)</center>
         {% endif %}
-        <div class="panel" id="user">
-            <img
-                loading="lazy"
-                id="user_icon"
-                src="{{ user.icon }}"
-                alt="User icon"
-            />
-            <h1 id="user_title">{{ user.title }}</h1>
-            <p id="user_name">u/{{ user.name }}</p>
-            <div id="user_description">{{ user.description }}</div>
-            <div id="user_details">
-                <label>Karma</label>
-                <label>Created</label>
-                <div>{{ user.karma }}</div>
-                <div>{{ user.created }}</div>
-            </div>
-            <div id="user_actions">
-                {% let name = ["u_", user.name.as_str()].join("") %}
-                <div id="user_subscription">
-                    {% if prefs.subscriptions.contains(name) %}
-                    <form
-                        action="/r/{{ name }}/unsubscribe?redirect={{ redirect_url }}"
-                        method="POST"
-                    >
-                        <button class="unsubscribe">Unfollow</button>
-                    </form>
-                    {% else %}
-                    <form
-                        action="/r/{{ name }}/subscribe?redirect={{ redirect_url }}"
-                        method="POST"
-                    >
-                        <button class="subscribe">Follow</button>
-                    </form>
-                    {% endif %}
-                </div>
-                <div id="user_filter">
-                    {% if prefs.filters.contains(name) %}
-                    <form
-                        action="/r/{{ name }}/unfilter?redirect={{ redirect_url }}"
-                        method="POST"
-                    >
-                        <button class="unfilter">Unfilter</button>
-                    </form>
-                    {% else %}
-                    <form
-                        action="/r/{{ name }}/filter?redirect={{ redirect_url }}"
-                        method="POST"
-                    >
-                        <button class="filter">Filter</button>
-                    </form>
-                    {% endif %}
-                </div>
-                {% if crate::utils::enable_rss() %}
-                <div id="user_rss">
-                    <a
-                        href="/u/{{ user.name }}.rss"
-                        title="RSS feed for u/{{ user.name }}"
-                    >
-                        <button class="subscribe">RSS feed</button>
-                    </a>
-                </div>
-                {% endif %}
-            </div>
-        </div>
-    </aside>
+    </div>
 </main>
 {% endblock %}

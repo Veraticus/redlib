@@ -432,12 +432,6 @@ img[src=""] {
     display: none;
 }
 
-aside {
-    flex-grow: 1;
-    margin: 20px 20px 0 10px;
-    max-width: 350px;
-}
-
 .post,
 .panel {
     border: var(--panel-border);
@@ -547,67 +541,7 @@ aside {
     margin: 0;
 }
 
-/* User */
-
-#user {
-    margin: 40px auto 0 auto;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    height: max-content;
-    background: var(--outside);
-    border-radius: 5px;
-    overflow: hidden;
-}
-
-#user * {
-    text-align: center;
-}
-
-#user_icon {
-    width: 100px;
-    height: 100px;
-    border: 2px solid var(--accent);
-    border-radius: 100%;
-    padding: 10px;
-    margin: 10px;
-}
-
-#user_title {
-    font-size: 20px;
-    font-weight: bold;
-}
-
-#user_description {
-    margin: 0 15px;
-    text-align: left;
-    overflow-wrap: anywhere;
-}
-
-#user_name,
-#user_description:not(:empty),
-#user_icon {
-    margin-bottom: 20px;
-}
-
-#user_details,
-#user_actions {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-}
-
-#user_details > label {
-    color: var(--accent);
-}
-
 /* Subscriptions */
-
-#user_subscription,
-#user_filter,
-#user_rss {
-    margin-top: 20px;
-}
 
 #multisub {
     margin-bottom: 20px;
@@ -2109,13 +2043,6 @@ th {
         max-width: unset;
     }
 
-    aside,
-    #user {
-        margin: 0;
-        max-width: 100%;
-    }
-    #user { margin: 0 0 20px; }
-
     .sub_bar {
         margin: 12px 0;
     }
@@ -2124,7 +2051,6 @@ th {
         min-height: calc(100vh - 75px);
         padding-top: 45px;
         .sub_bar { margin: 49px 0 12px; }
-        #user { margin: 49px 0 20px 0; }
         #settings { margin-top: 48px; }
         div.post.highlighted { margin-top: 49px; }
         main:not(:has(div + aside)) { #sort { margin-top: 49px; } }
