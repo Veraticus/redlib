@@ -22,8 +22,60 @@
 
 	{% block body %}
 		<main>
-			{% if !is_filtered %}
 			<div id="column_one">
+				{% if is_filtered || (!sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+")) && prefs.hide_sidebar_and_summary != "on" %}
+				<header class="sub_bar">
+					{% if is_filtered %}
+					<p class="filter_notice">(Content from r/{{ sub.name }} has been filtered)</p>
+					{% endif %}
+					{% if !sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+") %}
+					<div class="sub_bar_identity">
+						<img loading="lazy" class="sub_bar_icon" src="{{ sub.icon }}" alt="Icon for r/{{ sub.name }}">
+						<a class="sub_bar_name" href="/r/{{ sub.name }}">r/{{ sub.name }}</a>
+						<span class="sub_bar_meta" title="{{ sub.members.1 }} members · {{ sub.active.1 }} active">{{ sub.members.0 }} members · {{ sub.active.0 }} active</span>
+					</div>
+					<div class="sub_bar_actions">
+						{% if prefs.subscriptions.contains(sub.name) %}
+							<form action="/r/{{ sub.name }}/unsubscribe?redirect={{ redirect_url }}" method="POST">
+								<button class="unsubscribe">Unsubscribe</button>
+							</form>
+						{% else %}
+							<form action="/r/{{ sub.name }}/subscribe?redirect={{ redirect_url }}" method="POST">
+								<button class="subscribe">Subscribe</button>
+							</form>
+						{% endif %}
+						{% if prefs.filters.contains(sub.name) %}
+							<form action="/r/{{ sub.name }}/unfilter?redirect={{ redirect_url }}" method="POST">
+								<button class="unfilter">Unfilter</button>
+							</form>
+						{% else %}
+							<form action="/r/{{ sub.name }}/filter?redirect={{ redirect_url }}" method="POST">
+								<button class="filter">Filter</button>
+							</form>
+						{% endif %}
+						{% if crate::utils::enable_rss() %}
+							<a href="/r/{{ sub.name }}.rss" title="RSS feed for r/{{ sub.name }}">
+								<button class="subscribe">RSS</button>
+							</a>
+						{% endif %}
+					</div>
+					<details class="sub_bar_about">
+						<summary>About r/{{ sub.name }}</summary>
+						{% if sub.wiki %}
+						<p><a href="/r/{{ sub.name }}/wiki/index">Wiki</a></p>
+						{% endif %}
+						{% if !sub.title.is_empty() %}
+						<h2 class="sub_bar_title">{{ sub.title }}</h2>
+						{% endif %}
+						{% if !sub.description.is_empty() %}
+						<p class="sub_bar_description">{{ sub.description }}</p>
+						{% endif %}
+						<div class="sub_bar_info">{{ sub.info|safe }}</div>
+					</details>
+					{% endif %}
+				</header>
+				{% endif %}
+				{% if !is_filtered %}
 				{% if !current_collection.is_empty() %}
 				<section class="collection_banner">
 					<div class="collection_banner_title">
@@ -105,81 +157,7 @@
 				<a href="?sort={{ sort.0 }}&t={{ sort.1 }}&after={{ ends.1 }}" accesskey="N">NEXT</a>
 				{% endif %}
 			</footer>
+			{% endif %}
 		</div>
-		{% endif %}
-		{% if is_filtered || (!sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+")) && prefs.hide_sidebar_and_summary != "on" %}
-		<aside>
-			{% if is_filtered %}
-				<center>(Content from r/{{ sub.name }} has been filtered)</center>
-			{% endif %}
-			{% if !sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+") %}
-			<details class="panel" id="subreddit" open>
-				<summary id="subreddit_label">Subreddit</summary>
-				{% if sub.wiki %}
-				<div id="top">
-					<div>Posts</div>
-					<a href="/r/{{ sub.name }}/wiki/index">Wiki</a>
-				</div>
-				{% endif %}
-				<div id="sub_meta">
-					<img loading="lazy" id="sub_icon" src="{{ sub.icon }}" alt="Icon for r/{{ sub.name }}">
-					<h1 id="sub_title">{{ sub.title }}</h1>
-					<p id="sub_name">r/{{ sub.name }}</p>
-					<p id="sub_description">{{ sub.description }}</p>
-					<div id="sub_details">
-						<label>Members</label>
-						<label>Active</label>
-						<div title="{{ sub.members.1 }}">{{ sub.members.0 }}</div>
-						<div title="{{ sub.active.1 }}">{{ sub.active.0 }}</div>
-					</div>
-					<div id="sub_actions">
-						<div id="sub_subscription">
-							{% if prefs.subscriptions.contains(sub.name) %}
-								<form action="/r/{{ sub.name }}/unsubscribe?redirect={{ redirect_url }}" method="POST">
-									<button class="unsubscribe">Unsubscribe</button>
-								</form>
-							{% else %}
-								<form action="/r/{{ sub.name }}/subscribe?redirect={{ redirect_url }}" method="POST">
-									<button class="subscribe">Subscribe</button>
-								</form>
-							{% endif %}
-						</div>
-						<div id="sub_filter">
-							{% if prefs.filters.contains(sub.name) %}
-								<form action="/r/{{ sub.name }}/unfilter?redirect={{ redirect_url }}" method="POST">
-									<button class="unfilter">Unfilter</button>
-								</form>
-							{% else %}
-							<form action="/r/{{ sub.name }}/filter?redirect={{ redirect_url }}" method="POST">
-								<button class="filter">Filter</button>
-							</form>
-							{% endif %}
-						</div>
-						{% if crate::utils::enable_rss() %}
-						<div id="sub_rss">
-                            <a href="/r/{{ sub.name }}.rss" title="RSS feed for r/{{ sub.name }}">
-                                <button class="subscribe">RSS feed</button >
-                            </a>
-						</div>
-						{% endif %}
-				</div>
-			</details>
-			<details class="panel" id="sidebar">
-				<summary id="sidebar_label">Sidebar</summary>
-				<div id="sidebar_contents">
-					{{ sub.info|safe }}
-					{# <hr>
-					<h2>Moderators</h2>
-					<br>
-					<ul>
-					{% for moderator in sub.moderators %}
-					<li><a style="color: var(--accent)" href="/u/{{ moderator }}">{{ moderator }}</a></li>
-					{% endfor %}
-					</ul> #}
-				</div>
-			</details>
-			{% endif %}
-		</aside>
-		{% endif %}
 	</main>
 {% endblock %}

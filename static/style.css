@@ -448,12 +448,110 @@ aside {
     opacity: 0.5;
 }
 
-/* User & Subreddit */
+/* Subreddit header bar */
 
-#user,
-#subreddit,
-#sidebar {
+.sub_bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 10px 14px;
+    margin: 20px 0 12px;
+    background: var(--outside);
+    border: var(--panel-border);
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+.sub_bar_identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.sub_bar_icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    padding: 2px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.sub_bar_name {
+    font-weight: bold;
+    font-size: 16px;
+}
+
+.sub_bar_meta {
+    opacity: 0.7;
+    font-size: 13px;
+}
+
+.sub_bar_actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    flex-wrap: wrap;
+}
+
+.sub_bar_actions form {
+    margin: 0;
+}
+
+.sub_bar_actions button {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.sub_bar_about {
+    flex-basis: 100%;
+}
+
+.sub_bar_about > summary {
+    cursor: pointer;
+    padding: 6px 0;
+    opacity: 0.8;
+}
+
+.sub_bar_about[open] > summary {
+    margin-bottom: 8px;
+}
+
+.sub_bar_title {
+    font-size: 18px;
+    margin: 8px 0 4px;
+}
+
+.sub_bar_description {
+    margin: 6px 0;
+    overflow-wrap: anywhere;
+}
+
+.sub_bar_info {
+    overflow-wrap: anywhere;
+}
+
+.sub_bar_info img {
+    max-width: 100%;
+    height: auto;
+}
+
+.filter_notice {
+    flex-basis: 100%;
+    text-align: center;
+    opacity: 0.7;
+    margin: 0;
+}
+
+/* User */
+
+#user {
     margin: 40px auto 0 auto;
+    padding: 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -462,33 +560,12 @@ aside {
     border-radius: 5px;
     overflow: hidden;
 }
-@media screen and (min-width: 800px) {
-    #subreddit, #sidebar { min-width: 350px; }
-}
 
-#user *,
-#subreddit * {
+#user * {
     text-align: center;
 }
 
-#user,
-#sub_meta,
-#sidebar_contents {
-    padding: 20px;
-}
-
-#sidebar,
-#sidebar_contents {
-    margin-top: 10px;
-}
-#sidebar_label,
-#subreddit_label {
-    padding: 10px;
-    text-align: left;
-}
-
-#user_icon,
-#sub_icon {
+#user_icon {
     width: 100px;
     height: 100px;
     border: 2px solid var(--accent);
@@ -497,14 +574,12 @@ aside {
     margin: 10px;
 }
 
-#user_title,
-#sub_title {
+#user_title {
     font-size: 20px;
     font-weight: bold;
 }
 
-#user_description,
-#sub_description {
+#user_description {
     margin: 0 15px;
     text-align: left;
     overflow-wrap: anywhere;
@@ -512,36 +587,24 @@ aside {
 
 #user_name,
 #user_description:not(:empty),
-#user_icon,
-#sub_name,
-#sub_icon,
-#sub_description:not(:empty) {
+#user_icon {
     margin-bottom: 20px;
 }
 
 #user_details,
-#sub_details,
-#sub_actions,
 #user_actions {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
 }
-@media screen and (max-width: 279px) {
-    #sub_actions { display: unset; }
-}
 
-#user_details > label,
-#sub_details > label {
+#user_details > label {
     color: var(--accent);
 }
 
 /* Subscriptions */
 
-#sub_subscription,
 #user_subscription,
-#sub_filter,
 #user_filter,
-#sub_rss,
 #user_rss {
     margin-top: 20px;
 }
@@ -2047,26 +2110,25 @@ th {
     }
 
     aside,
-    #subreddit,
     #user {
         margin: 0;
         max-width: 100%;
     }
     #user { margin: 0 0 20px; }
-    
+
+    .sub_bar {
+        margin: 12px 0;
+    }
+
     body.fixed_navbar {
         min-height: calc(100vh - 75px);
         padding-top: 45px;
-        #subreddit { margin: 49px 0 0; }
+        .sub_bar { margin: 49px 0 12px; }
         #user { margin: 49px 0 20px 0; }
         #settings { margin-top: 48px; }
         div.post.highlighted { margin-top: 49px; }
         main:not(:has(div + aside)) { #sort { margin-top: 49px; } }
         #column_one:has(div.post.highlighted + #commentQueryForms) { #sort { margin-top: 0 } }
-    }
-
-    #sidebar {
-        margin: 20px 0;
     }
     #logo,
     #links {
