@@ -23,12 +23,13 @@
 	{% block body %}
 		<main>
 			<div id="column_one">
-				{% if is_filtered || (!sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+")) && prefs.hide_sidebar_and_summary != "on" %}
+				{% let is_real_sub = !sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+") && current_collection.is_empty() %}
+				{% if is_filtered || (is_real_sub && prefs.hide_sidebar_and_summary != "on") %}
 				<header class="sub_bar">
 					{% if is_filtered %}
 					<p class="filter_notice">(Content from r/{{ sub.name }} has been filtered)</p>
 					{% endif %}
-					{% if !sub.name.is_empty() && sub.name != "all" && sub.name != "popular" && !sub.name.contains("+") %}
+					{% if is_real_sub %}
 					<div class="sub_bar_identity">
 						<img loading="lazy" class="sub_bar_icon" src="{{ sub.icon }}" alt="Icon for r/{{ sub.name }}">
 						<a class="sub_bar_name" href="/r/{{ sub.name }}">r/{{ sub.name }}</a>
@@ -59,6 +60,7 @@
 							</a>
 						{% endif %}
 					</div>
+					{% if sub.wiki || !sub.title.is_empty() || !sub.description.is_empty() || !sub.info.is_empty() %}
 					<details class="sub_bar_about">
 						<summary>About r/{{ sub.name }}</summary>
 						{% if sub.wiki %}
@@ -70,8 +72,11 @@
 						{% if !sub.description.is_empty() %}
 						<p class="sub_bar_description">{{ sub.description }}</p>
 						{% endif %}
+						{% if !sub.info.is_empty() %}
 						<div class="sub_bar_info">{{ sub.info|safe }}</div>
+						{% endif %}
 					</details>
+					{% endif %}
 					{% endif %}
 				</header>
 				{% endif %}
