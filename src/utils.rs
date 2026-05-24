@@ -60,9 +60,14 @@ pub fn truncate_body(s: &str, limit: usize) -> (String, bool) {
 	if stripped.len() <= limit {
 		(stripped, false)
 	} else {
-		// Try to break at a word boundary
-		let truncated = &stripped[..limit];
-		let break_point = truncated.rfind(' ').unwrap_or(limit);
+		// Walk back to a UTF-8 char boundary so multi-byte characters near
+		// `limit` don't panic the slice.
+		let mut cut = limit;
+		while cut > 0 && !stripped.is_char_boundary(cut) {
+			cut -= 1;
+		}
+		let truncated = &stripped[..cut];
+		let break_point = truncated.rfind(' ').unwrap_or(cut);
 		(format!("{}...", &stripped[..break_point]), true)
 	}
 }
