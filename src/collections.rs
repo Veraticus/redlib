@@ -7,11 +7,11 @@ use crate::config;
 pub static COLLECTIONS: LazyLock<HashMap<String, String>> = LazyLock::new(|| parse_collection_map(config::get_setting("REDLIB_COLLECTIONS")));
 
 /// Reddit's multireddit URL endpoint caps at ~100 subs. Stay under that.
-pub const HOME_FEED_SAMPLE_SIZE: usize = 100;
+const HOME_FEED_SAMPLE_SIZE: usize = 100;
 
 /// Window length for the home-from-collections rotation. Within a window the
 /// generated multireddit URL is identical, so the existing JSON cache hits.
-pub const HOME_FEED_WINDOW_SECS: u64 = 600;
+const HOME_FEED_WINDOW_SECS: u64 = 600;
 
 /// Build a deterministic `(window_id, "sub1+sub2+...")` for the
 /// home-from-collections feed. Same `(window_id, collection-contents)` always
@@ -61,10 +61,10 @@ pub fn is_empty() -> bool {
 	COLLECTIONS.is_empty()
 }
 
-/// Returns the deduplicated set of subreddit names across every configured
-/// collection, with any `r/` prefix stripped. Names are sorted for stable
-/// output.
-pub fn all_subs_unique() -> Vec<String> {
+/// Cached unique-subs list. COLLECTIONS itself never mutates after startup,
+/// so the deduplicated, sorted view is computed once and cloned to callers
+/// that need an owned Vec (e.g. the per-window shuffle).
+static ALL_SUBS_UNIQUE: LazyLock<Vec<String>> = LazyLock::new(|| {
 	let mut seen = std::collections::BTreeSet::new();
 	for target in COLLECTIONS.values() {
 		for entry in target.split('+') {
@@ -80,6 +80,13 @@ pub fn all_subs_unique() -> Vec<String> {
 		}
 	}
 	seen.into_iter().collect()
+});
+
+/// Returns the deduplicated set of subreddit names across every configured
+/// collection, with any `r/` prefix stripped. Names are sorted for stable
+/// output. The underlying set is built once at first use.
+pub fn all_subs_unique() -> Vec<String> {
+	ALL_SUBS_UNIQUE.clone()
 }
 
 fn parse_collection_map(value: Option<String>) -> HashMap<String, String> {

@@ -17,7 +17,7 @@ use regex::Regex;
 use rss::{ChannelBuilder, Item, Enclosure};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use time::{Duration, OffsetDateTime};
 
@@ -71,20 +71,25 @@ static GEO_FILTER_MATCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"geo_fil
 pub static HOME_FETCH_BODY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Per-window home-page post cache. Within a 10-minute window, repeated
-/// requests for the same `(window_id, sub_name, sort, query_suffix)` tuple
-/// share a single underlying `Post::fetch` call. `window_id` in the key gives
-/// natural rotation as time advances — old entries get LRU'd, not retained
-/// past their window.
+/// requests for the same `(window_id, sub_name, sort, query_suffix, quarantined)`
+/// tuple share a single underlying `Post::fetch` call. `window_id` in the key
+/// gives natural rotation as time advances — old entries get LRU'd.
 ///
-/// TTL is 700s (longer than the 600s sampling window) so an entry survives
-/// the boundary until the next request rotates `window_id`. Size 32 covers
-/// ~3 sorts × ~4 pagination depths × 2 windows of overlap.
+/// TTL is 700s (longer than the 600s sampling window) so an entry survives the
+/// boundary until the next request rotates `window_id`. Size 128 covers
+/// concurrent users paginating across multiple sorts and overlapping windows.
+///
+/// Returns `Arc<(Vec<Post>, String)>` so cache hits are O(1) refcount bumps
+/// rather than full clones of the post vector. With `cached(result = true)`,
+/// only the `Ok` variant is stored — `Err` results are not memoized, which
+/// means downstream Reddit outages re-attempt on every call (gated by the
+/// breaker, so the network is not actually hit).
 #[cached(
-	size = 32,
+	size = 128,
 	time = 700,
 	result = true,
-	key = "(u64, String, String, String)",
-	convert = r#"{ (window_id, sub_name.clone(), sort.clone(), query_suffix.clone()) }"#
+	key = "(u64, String, String, String, bool)",
+	convert = r#"{ (window_id, sub_name.clone(), sort.clone(), query_suffix.clone(), quarantined) }"#
 )]
 async fn fetch_home_posts(
 	window_id: u64,
@@ -92,16 +97,29 @@ async fn fetch_home_posts(
 	sort: String,
 	query_suffix: String,
 	quarantined: bool,
-) -> Result<(Vec<Post>, String), String> {
+) -> Result<Arc<(Vec<Post>, String)>, String> {
 	// `window_id` is intentionally unused in the body — it's a cache-key
 	// discriminant only, so the cache rotates as the caller advances time.
 	let _ = window_id;
+	// In test builds, the parameters drive the cache key but are otherwise
+	// unused (the body short-circuits before path construction).
+	#[cfg(test)]
+	let _ = (&sub_name, &sort, &query_suffix, &quarantined);
 
 	#[cfg(test)]
-	HOME_FETCH_BODY_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+	{
+		HOME_FETCH_BODY_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+		// Tests verify cache-routing behavior, not Reddit reachability. Return
+		// a deterministic Ok so `cached(result = true)` actually stores it and
+		// the second call can be served from cache.
+		Ok(Arc::new((Vec::new(), String::new())))
+	}
 
-	let path = format!("/r/{}/{sort}.json?{query_suffix}", sub_name.replace('+', "%2B"));
-	Post::fetch(&path, quarantined, false).await
+	#[cfg(not(test))]
+	{
+		let path = format!("/r/{}/{sort}.json?{query_suffix}", sub_name.replace('+', "%2B"));
+		Post::fetch(&path, quarantined, false).await.map(Arc::new)
+	}
 }
 
 // SERVICES
@@ -256,11 +274,15 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 		}))
 	} else {
 		// Home-from-collections requests share a parsed-Vec<Post> cache keyed
-		// on (window_id, sub_name, sort, query); other paths use the regular
-		// Post::fetch path with its underlying 30s JSON cache.
+		// on (window_id, sub_name, sort, query, quarantined); other paths use
+		// the regular Post::fetch path with its underlying 30s JSON cache.
+		// `Arc::unwrap_or_clone` makes single-reader hits free (refcount == 1)
+		// and falls back to a Vec<Post> clone only under concurrent overlap.
 		let fetch_result = if let Some(wid) = home_window_id {
 			let query_suffix = format!("{}{params}", req.uri().query().unwrap_or_default());
-			fetch_home_posts(wid, sub_name.clone(), sort.clone(), query_suffix, quarantined).await
+			fetch_home_posts(wid, sub_name.clone(), sort.clone(), query_suffix, quarantined)
+				.await
+				.map(Arc::unwrap_or_clone)
 		} else {
 			Post::fetch(&path, quarantined, false).await
 		};
@@ -273,9 +295,9 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					posts.sort_by(|a, b| b.created_ts.cmp(&a.created_ts));
 					posts.sort_by(|a, b| b.flags.stickied.cmp(&a.flags.stickied));
 				}
-			Ok(template(&SubredditTemplate {
-				sub,
-				posts,
+				Ok(template(&SubredditTemplate {
+					sub,
+					posts,
 					sort: (sort, param(&path, "t").unwrap_or_default()),
 					ends: (param(&path, "after").unwrap_or_default(), after),
 					prefs: Preferences::new(&req),
@@ -283,11 +305,11 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					redirect_url,
 					is_filtered: false,
 					all_posts_filtered,
-				all_posts_hidden_nsfw,
-				no_posts,
-				current_collection: current_collection.clone(),
-				collection_subreddits: collection_subreddits.clone(),
-			}))
+					all_posts_hidden_nsfw,
+					no_posts,
+					current_collection: current_collection.clone(),
+					collection_subreddits: collection_subreddits.clone(),
+				}))
 			}
 			Err(msg) => match msg.as_str() {
 				"quarantined" | "gated" => Ok(quarantine(&req, sub_name, &msg)),
@@ -962,10 +984,11 @@ mod tests {
 	}
 
 	// The home_cache tests use sealed_test to fork a fresh process per test,
-	// giving each test its own copy of the cache + counter. Reddit calls in
-	// the function body will fail (IP-blocked / offline), but the cache
-	// still stores the Err and serves subsequent calls without re-running
-	// the body — which is exactly the behavior we want to verify.
+	// giving each test its own copy of the cache + counter. Each test asserts
+	// on `HOME_FETCH_BODY_COUNT` to verify the cache routes correctly. In
+	// test builds the body short-circuits with a deterministic `Ok` so
+	// `cached(result = true)` actually stores the value and subsequent calls
+	// can be served from cache without re-entering the body.
 
 	#[test]
 	#[sealed_test]
