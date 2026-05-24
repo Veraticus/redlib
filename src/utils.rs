@@ -98,7 +98,7 @@ pub enum ResourceType {
 }
 
 /// Post flair with content, background color and foreground color
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Flair {
 	pub flair_parts: Vec<FlairPart>,
 	pub text: String,
@@ -149,14 +149,14 @@ impl FlairPart {
 	}
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Author {
 	pub name: String,
 	pub flair: Flair,
 	pub distinguished: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Poll {
 	pub poll_options: Vec<PollOption>,
 	pub voting_end_timestamp: (String, String),
@@ -184,7 +184,7 @@ impl Poll {
 	}
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PollOption {
 	pub id: u64,
 	pub text: String,
@@ -214,14 +214,14 @@ impl PollOption {
 }
 
 /// Post flags with NSFW and stickied
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Flags {
 	pub spoiler: bool,
 	pub nsfw: bool,
 	pub stickied: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Media {
 	pub url: String,
 	pub alt_url: String,
@@ -329,7 +329,7 @@ impl Media {
 	}
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct GalleryMedia {
 	pub url: String,
 	pub width: i64,
@@ -370,7 +370,7 @@ impl GalleryMedia {
 }
 
 /// Post containing content, metadata and media
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Post {
 	pub id: String,
 	pub title: String,
@@ -560,7 +560,7 @@ impl std::fmt::Display for Award {
 	}
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Awards(pub Vec<Award>);
 
 impl std::ops::Deref for Awards {
@@ -568,6 +568,15 @@ impl std::ops::Deref for Awards {
 
 	fn deref(&self) -> &Self::Target {
 		&self.0
+	}
+}
+
+impl IntoIterator for Awards {
+	type Item = Award;
+	type IntoIter = std::vec::IntoIter<Award>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		self.0.into_iter()
 	}
 }
 

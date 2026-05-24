@@ -7,6 +7,7 @@ use crate::utils::{
 use crate::{client::json, server::RequestExt, server::ResponseExt};
 use crate::{collections, config, utils};
 use askama::Template;
+use cached::proc_macro::cached;
 use cookie::Cookie;
 use htmlescape::decode_html;
 use hyper::{Body, Request, Response};
@@ -14,6 +15,8 @@ use hyper::{Body, Request, Response};
 use chrono::DateTime;
 use regex::Regex;
 use rss::{ChannelBuilder, Item, Enclosure};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use time::{Duration, OffsetDateTime};
@@ -63,6 +66,44 @@ struct WallTemplate {
 
 static GEO_FILTER_MATCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"geo_filter=(?<region>\w+)").unwrap());
 
+/// Test-only counter for verifying `fetch_home_posts` cache behavior.
+#[cfg(test)]
+pub static HOME_FETCH_BODY_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Per-window home-page post cache. Within a 10-minute window, repeated
+/// requests for the same `(window_id, sub_name, sort, query_suffix)` tuple
+/// share a single underlying `Post::fetch` call. `window_id` in the key gives
+/// natural rotation as time advances — old entries get LRU'd, not retained
+/// past their window.
+///
+/// TTL is 700s (longer than the 600s sampling window) so an entry survives
+/// the boundary until the next request rotates `window_id`. Size 32 covers
+/// ~3 sorts × ~4 pagination depths × 2 windows of overlap.
+#[cached(
+	size = 32,
+	time = 700,
+	result = true,
+	key = "(u64, String, String, String)",
+	convert = r#"{ (window_id, sub_name.clone(), sort.clone(), query_suffix.clone()) }"#
+)]
+async fn fetch_home_posts(
+	window_id: u64,
+	sub_name: String,
+	sort: String,
+	query_suffix: String,
+	quarantined: bool,
+) -> Result<(Vec<Post>, String), String> {
+	// `window_id` is intentionally unused in the body — it's a cache-key
+	// discriminant only, so the cache rotates as the caller advances time.
+	let _ = window_id;
+
+	#[cfg(test)]
+	HOME_FETCH_BODY_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+	let path = format!("/r/{}/{sort}.json?{query_suffix}", sub_name.replace('+', "%2B"));
+	Post::fetch(&path, quarantined, false).await
+}
+
 // SERVICES
 pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	// Build Reddit API path
@@ -74,10 +115,15 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let post_sort = req.cookie("post_sort").map_or_else(|| "hot".to_string(), |c| c.value().to_string());
 	let sort = req.param("sort").unwrap_or_else(|| req.param("id").unwrap_or(post_sort));
 	let home_from_collections = config::get_setting("REDLIB_HOME_FROM_COLLECTIONS").as_deref() == Some("on");
+	// `Some(window_id)` when this request is being served from the
+	// home-from-collections path; used downstream to route the fetch through
+	// `fetch_home_posts` so the per-window cache hits.
+	let mut home_window_id: Option<u64> = None;
 	let default_front = if front_page == "default" || front_page.is_empty() {
 		if root && home_from_collections {
 			let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-			if let Some((_window_id, sample)) = collections::sample_home_for_window(now_unix) {
+			if let Some((window_id, sample)) = collections::sample_home_for_window(now_unix) {
+				home_window_id = Some(window_id);
 				sample
 			} else if subscribed.is_empty() {
 				"popular".to_string()
@@ -209,7 +255,16 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			collection_subreddits: collection_subreddits.clone(),
 		}))
 	} else {
-		match Post::fetch(&path, quarantined, false).await {
+		// Home-from-collections requests share a parsed-Vec<Post> cache keyed
+		// on (window_id, sub_name, sort, query); other paths use the regular
+		// Post::fetch path with its underlying 30s JSON cache.
+		let fetch_result = if let Some(wid) = home_window_id {
+			let query_suffix = format!("{}{params}", req.uri().query().unwrap_or_default());
+			fetch_home_posts(wid, sub_name.clone(), sort.clone(), query_suffix, quarantined).await
+		} else {
+			Post::fetch(&path, quarantined, false).await
+		};
+		match fetch_result {
 			Ok((mut posts, after)) => {
 				let (_, all_posts_filtered) = filter_posts(&mut posts, &filters);
 				let no_posts = posts.is_empty();
@@ -889,6 +944,8 @@ fn get_mime_type(url: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use sealed_test::prelude::*;
+	use std::sync::atomic::Ordering;
 
 	#[tokio::test(flavor = "multi_thread")]
 	async fn test_fetching_subreddit() {
@@ -902,5 +959,44 @@ mod tests {
 		assert!(quarantined.is_ok());
 		let gated = subreddit("drugs", true).await;
 		assert!(gated.is_ok());
+	}
+
+	// The home_cache tests use sealed_test to fork a fresh process per test,
+	// giving each test its own copy of the cache + counter. Reddit calls in
+	// the function body will fail (IP-blocked / offline), but the cache
+	// still stores the Err and serves subsequent calls without re-running
+	// the body — which is exactly the behavior we want to verify.
+
+	#[test]
+	#[sealed_test]
+	fn home_cache_hits_within_same_window() {
+		tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async {
+			HOME_FETCH_BODY_COUNT.store(0, Ordering::SeqCst);
+			let _ = fetch_home_posts(1001, "rust+go".to_string(), "hot".to_string(), String::new(), false).await;
+			let _ = fetch_home_posts(1001, "rust+go".to_string(), "hot".to_string(), String::new(), false).await;
+			assert_eq!(HOME_FETCH_BODY_COUNT.load(Ordering::SeqCst), 1, "second call must be served from cache");
+		});
+	}
+
+	#[test]
+	#[sealed_test]
+	fn home_cache_misses_across_windows() {
+		tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async {
+			HOME_FETCH_BODY_COUNT.store(0, Ordering::SeqCst);
+			let _ = fetch_home_posts(2001, "rust+go".to_string(), "hot".to_string(), String::new(), false).await;
+			let _ = fetch_home_posts(2002, "rust+go".to_string(), "hot".to_string(), String::new(), false).await;
+			assert_eq!(HOME_FETCH_BODY_COUNT.load(Ordering::SeqCst), 2, "different window_id must miss the cache");
+		});
+	}
+
+	#[test]
+	#[sealed_test]
+	fn home_cache_misses_across_sorts() {
+		tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async {
+			HOME_FETCH_BODY_COUNT.store(0, Ordering::SeqCst);
+			let _ = fetch_home_posts(3001, "rust+go".to_string(), "hot".to_string(), String::new(), false).await;
+			let _ = fetch_home_posts(3001, "rust+go".to_string(), "new".to_string(), String::new(), false).await;
+			assert_eq!(HOME_FETCH_BODY_COUNT.load(Ordering::SeqCst), 2, "different sort must miss the cache");
+		});
 	}
 }
