@@ -12,7 +12,7 @@ use percent_encoding::{percent_encode, CONTROLS};
 use serde_json::Value;
 use std::result::Result;
 use std::sync::atomic::Ordering;
-use std::sync::atomic::{AtomicBool, AtomicU16};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64};
 use std::sync::LazyLock;
 use wreq::redirect::Policy;
 use wreq::{header as wreq_header, Client as WreqClient, EmulationFactory, Method, Response as WreqResponse};
@@ -38,6 +38,45 @@ pub static OAUTH_CLIENT: LazyLock<ArcSwap<Oauth>> = LazyLock::new(|| {
 pub static OAUTH_RATELIMIT_REMAINING: AtomicU16 = AtomicU16::new(99);
 
 pub static OAUTH_IS_ROLLING_OVER: AtomicBool = AtomicBool::new(false);
+
+/// Below this rate-limit floor, `json()` refuses to even attempt a request —
+/// we don't want to amplify the "rapid token churn" abuse signature that got
+/// the instance 403-blocked in the first place.
+const BREAKER_FLOOR: u16 = 5;
+
+/// Cool-down applied on any 403 from Reddit. 15 minutes matches the observed
+/// IP-block window; do not shorten without evidence Reddit's behavior changed.
+const BLOCK_COOLDOWN_SECS: u64 = 900;
+
+/// Unix-seconds timestamp before which `json()` refuses to call Reddit.
+/// Set whenever Reddit returns 403; cleared automatically when the timestamp
+/// passes — no restart needed.
+pub static OAUTH_BLOCKED_UNTIL: AtomicU64 = AtomicU64::new(0);
+
+fn now_unix() -> u64 {
+	std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+/// Pure gate logic — extracted so it's testable without HTTP mocking or
+/// mutating global atomics. Returns `Some(err)` if the call should be refused,
+/// `None` if it may proceed.
+fn check_breaker_gate(blocked_until: u64, rate_remaining: u16, is_rolling_over: bool, now: u64) -> Option<String> {
+	if blocked_until > now {
+		return Some(format!("Reddit unavailable; cooling down until unix {blocked_until}"));
+	}
+	if rate_remaining < BREAKER_FLOOR && !is_rolling_over {
+		return Some("Rate budget conservation; refusing request".to_string());
+	}
+	None
+}
+
+/// Persist the 403 cool-down. Separate function so the time source is injected
+/// in tests.
+fn record_403_cooldown(now: u64) {
+	let until = now + BLOCK_COOLDOWN_SECS;
+	OAUTH_BLOCKED_UNTIL.store(until, Ordering::SeqCst);
+	warn!("Reddit returned 403; cooling down json() calls until unix {until}");
+}
 
 const URL_PAIRS: [(&str, &str); 2] = [
 	(ALTERNATIVE_REDDIT_URL_BASE, ALTERNATIVE_REDDIT_URL_BASE_HOST),
@@ -327,9 +366,18 @@ pub async fn json(path: String, quarantine: bool) -> Result<Value, String> {
 		Err(format!("{msg}: {e} | {path}"))
 	};
 
-	// First, handle rolling over the OAUTH_CLIENT if need be.
+	// Circuit breaker: refuse before touching the network when we're in a
+	// 403 cool-down or below the conservation floor.
+	let now = now_unix();
+	let blocked_until = OAUTH_BLOCKED_UNTIL.load(Ordering::SeqCst);
 	let current_rate_limit = OAUTH_RATELIMIT_REMAINING.load(Ordering::SeqCst);
 	let is_rolling_over = OAUTH_IS_ROLLING_OVER.load(Ordering::SeqCst);
+	if let Some(gate_err) = check_breaker_gate(blocked_until, current_rate_limit, is_rolling_over, now) {
+		return Err(format!("{gate_err} | {path}"));
+	}
+
+	// Proactive token refresh (kept separate from the breaker — fires earlier
+	// to avoid letting the budget run all the way to the floor).
 	if current_rate_limit < 10 && !is_rolling_over {
 		warn!("Rate limit {current_rate_limit} is low. Spawning force_refresh_token()");
 		tokio::spawn(force_refresh_token());
@@ -340,6 +388,15 @@ pub async fn json(path: String, quarantine: bool) -> Result<Value, String> {
 	match reddit_get(path.clone(), quarantine).await {
 		Ok(response) => {
 			let status = response.status();
+
+			// 403 is an IP-level block signal from Reddit. Record the cool-down
+			// and bail before the empty-body branch below misclassifies it as
+			// a 429 and spawns yet another token refresh (which is what got us
+			// blocked in the first place).
+			if status.as_u16() == 403 {
+				record_403_cooldown(now_unix());
+				return Err(format!("Reddit returned 403; cooling down for {BLOCK_COOLDOWN_SECS}s | {path}"));
+			}
 
 			let reset: Option<String> = if let (Some(remaining), Some(reset), Some(used)) = (
 				response.headers().get("x-ratelimit-remaining").and_then(|val| val.to_str().ok().map(|s| s.to_string())),
@@ -476,6 +533,47 @@ mod tests {
 	use {crate::config::get_setting, sealed_test::prelude::*};
 
 	const POPULAR_URL: &str = "/r/popular/hot.json?&raw_json=1&geo_filter=GLOBAL";
+
+	#[test]
+	fn breaker_gate_passes_when_unblocked() {
+		// Healthy state: no cooldown, plenty of budget.
+		assert!(check_breaker_gate(0, 99, false, 1_500_000_000).is_none());
+	}
+
+	#[test]
+	fn breaker_gate_blocks_when_blocked_until_future() {
+		let now = 1_500_000_000;
+		let until = now + 60;
+		let err = check_breaker_gate(until, 99, false, now).expect("should be blocked");
+		assert!(err.contains("cooling down"), "got: {err}");
+	}
+
+	#[test]
+	fn breaker_gate_passes_when_blocked_until_past() {
+		let now = 1_500_000_000;
+		assert!(check_breaker_gate(now - 1, 99, false, now).is_none());
+	}
+
+	#[test]
+	fn breaker_gate_blocks_when_budget_under_floor() {
+		let err = check_breaker_gate(0, BREAKER_FLOOR - 1, false, 1_500_000_000).expect("should be blocked");
+		assert!(err.contains("conservation") || err.contains("budget"), "got: {err}");
+	}
+
+	#[test]
+	fn breaker_gate_passes_when_rolling_over_even_if_low() {
+		// While a refresh is in flight, don't pile on additional errors —
+		// the rolling token will repair the budget soon.
+		assert!(check_breaker_gate(0, BREAKER_FLOOR - 1, true, 1_500_000_000).is_none());
+	}
+
+	#[test]
+	#[sealed_test]
+	fn record_403_cooldown_sets_blocked_until() {
+		let now = 1_500_000_000_u64;
+		record_403_cooldown(now);
+		assert_eq!(OAUTH_BLOCKED_UNTIL.load(Ordering::SeqCst), now + BLOCK_COOLDOWN_SECS);
+	}
 
 	#[test]
 	#[sealed_test(env = [("REDLIB_DEFAULT_SUBSCRIPTIONS", "rust")])]
