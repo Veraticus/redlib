@@ -15,6 +15,7 @@ use chrono::DateTime;
 use regex::Regex;
 use rss::{ChannelBuilder, Item, Enclosure};
 use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 use time::{Duration, OffsetDateTime};
 
 // STRUCTS
@@ -62,22 +63,6 @@ struct WallTemplate {
 
 static GEO_FILTER_MATCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"geo_filter=(?<region>\w+)").unwrap());
 
-/// Reddit's multireddit URL endpoint caps at ~100 subs. Stay under that.
-const HOME_FEED_SAMPLE_SIZE: usize = 100;
-
-/// Build a `+`-joined multireddit string from a random sample of every
-/// subreddit configured across every collection. Returns `None` when no
-/// collections are configured.
-fn sample_home_from_collections() -> Option<String> {
-	let mut all = collections::all_subs_unique();
-	if all.is_empty() {
-		return None;
-	}
-	fastrand::shuffle(&mut all);
-	all.truncate(HOME_FEED_SAMPLE_SIZE);
-	Some(all.join("+"))
-}
-
 // SERVICES
 pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	// Build Reddit API path
@@ -91,7 +76,8 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	let home_from_collections = config::get_setting("REDLIB_HOME_FROM_COLLECTIONS").as_deref() == Some("on");
 	let default_front = if front_page == "default" || front_page.is_empty() {
 		if root && home_from_collections {
-			if let Some(sample) = sample_home_from_collections() {
+			let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+			if let Some((_window_id, sample)) = collections::sample_home_for_window(now_unix) {
 				sample
 			} else if subscribed.is_empty() {
 				"popular".to_string()
@@ -835,7 +821,7 @@ pub async fn rss(req: Request<Body>) -> Result<Response<Body>, String> {
 
 // Set enclosure image for RSS feed item
 fn apply_enclosure(item: &mut Item, post: &Post) {
-	item.set_enclosure(get_rss_image(&post));
+	item.set_enclosure(get_rss_image(post));
 
 	// Embed the number of gallery images in description and content since
 	// only the first image in the gallery is used for the enclosure
@@ -862,7 +848,7 @@ fn apply_enclosure(item: &mut Item, post: &Post) {
 fn get_rss_image(post: &Post) -> Option<Enclosure> {
 	let image_url = match post.post_type.as_str() {
 		"image" => Some(post.media.url.clone()),
-		"gallery" => post.gallery.get(0).and_then(|media| decode_html(&media.url).ok()),
+		"gallery" => post.gallery.first().and_then(|media| decode_html(&media.url).ok()),
 		"gif" | "video" => decode_html(&post.media.poster).ok(),
 		_ => None,
 	};
