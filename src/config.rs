@@ -114,6 +114,9 @@ pub struct Config {
 
 	#[serde(rename = "REDLIB_HOME_FROM_COLLECTIONS")]
 	pub(crate) home_from_collections: Option<String>,
+
+	#[serde(rename = "REDLIB_HOME_EXCLUDED_COLLECTIONS")]
+	pub(crate) home_excluded_collections: Option<String>,
 }
 
 impl Config {
@@ -164,6 +167,7 @@ impl Config {
 			default_remove_default_feeds: parse("REDLIB_DEFAULT_REMOVE_DEFAULT_FEEDS"),
 			collections: parse("REDLIB_COLLECTIONS"),
 			home_from_collections: parse("REDLIB_HOME_FROM_COLLECTIONS"),
+			home_excluded_collections: parse("REDLIB_HOME_EXCLUDED_COLLECTIONS"),
 		}
 	}
 }
@@ -196,6 +200,7 @@ fn get_setting_from_config(name: &str, config: &Config) -> Option<String> {
 		"REDLIB_DEFAULT_REMOVE_DEFAULT_FEEDS" => config.default_remove_default_feeds.clone(),
 		"REDLIB_COLLECTIONS" => config.collections.clone(),
 		"REDLIB_HOME_FROM_COLLECTIONS" => config.home_from_collections.clone(),
+		"REDLIB_HOME_EXCLUDED_COLLECTIONS" => config.home_excluded_collections.clone(),
 		_ => None,
 	}
 }

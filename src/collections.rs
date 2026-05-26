@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use crate::config;
@@ -21,7 +21,7 @@ const HOME_FEED_WINDOW_SECS: u64 = 600;
 /// Uses a local `fastrand::Rng` instance — the global RNG is untouched.
 pub fn sample_home_for_window(now_unix: u64) -> Option<(u64, String)> {
 	let window_id = now_unix / HOME_FEED_WINDOW_SECS;
-	let mut all = all_subs_unique();
+	let mut all = home_subs_unique();
 	if all.is_empty() {
 		return None;
 	}
@@ -61,12 +61,29 @@ pub fn is_empty() -> bool {
 	COLLECTIONS.is_empty()
 }
 
-/// Cached unique-subs list. COLLECTIONS itself never mutates after startup,
-/// so the deduplicated, sorted view is computed once and cloned to callers
-/// that need an owned Vec (e.g. the per-window shuffle).
-static ALL_SUBS_UNIQUE: LazyLock<Vec<String>> = LazyLock::new(|| {
+/// Collection names excluded from the home-from-collections sample, parsed
+/// from `REDLIB_HOME_EXCLUDED_COLLECTIONS` (`+`-separated, whitespace tolerant,
+/// empty entries ignored). A sub is excluded from the home sample only if
+/// every collection it appears in is on this list — cross-listed subs survive.
+static HOME_EXCLUDED_COLLECTIONS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+	config::get_setting("REDLIB_HOME_EXCLUDED_COLLECTIONS")
+		.unwrap_or_default()
+		.split('+')
+		.map(str::trim)
+		.filter(|s| !s.is_empty())
+		.map(String::from)
+		.collect()
+});
+
+fn collect_subs_unique<F>(should_include_collection: F) -> Vec<String>
+where
+	F: Fn(&str) -> bool,
+{
 	let mut seen = std::collections::BTreeSet::new();
-	for target in COLLECTIONS.values() {
+	for (name, target) in COLLECTIONS.iter() {
+		if !should_include_collection(name) {
+			continue;
+		}
 		for entry in target.split('+') {
 			let trimmed = entry.trim();
 			if trimmed.is_empty() {
@@ -80,13 +97,28 @@ static ALL_SUBS_UNIQUE: LazyLock<Vec<String>> = LazyLock::new(|| {
 		}
 	}
 	seen.into_iter().collect()
-});
+}
+
+/// Cached unique-subs list across every collection. Used by callers that
+/// want the full deduplicated view (not the home-page sample).
+static ALL_SUBS_UNIQUE: LazyLock<Vec<String>> = LazyLock::new(|| collect_subs_unique(|_| true));
+
+/// Cached unique-subs list with `REDLIB_HOME_EXCLUDED_COLLECTIONS` applied.
+/// Built once at first use because both COLLECTIONS and the exclude set are
+/// derived from immutable env/config state.
+static HOME_SUBS_UNIQUE: LazyLock<Vec<String>> = LazyLock::new(|| collect_subs_unique(|name| !HOME_EXCLUDED_COLLECTIONS.contains(name)));
 
 /// Returns the deduplicated set of subreddit names across every configured
 /// collection, with any `r/` prefix stripped. Names are sorted for stable
 /// output. The underlying set is built once at first use.
 pub fn all_subs_unique() -> Vec<String> {
 	ALL_SUBS_UNIQUE.clone()
+}
+
+/// Like `all_subs_unique`, but skips collections listed in
+/// `REDLIB_HOME_EXCLUDED_COLLECTIONS`. Used to build the home-page sample.
+pub fn home_subs_unique() -> Vec<String> {
+	HOME_SUBS_UNIQUE.clone()
 }
 
 fn parse_collection_map(value: Option<String>) -> HashMap<String, String> {
@@ -175,5 +207,43 @@ mod tests {
 	fn sample_home_truncates_to_cap() {
 		let (_, path) = sample_home_for_window(1_500_000_000).expect("collections configured");
 		assert_eq!(path.split('+').count(), HOME_FEED_SAMPLE_SIZE);
+	}
+
+	#[test]
+	#[sealed_test(env = [
+		("REDLIB_COLLECTIONS", "ok=rust+golang;nsfw=onlyhere1+onlyhere2"),
+		("REDLIB_HOME_EXCLUDED_COLLECTIONS", "nsfw"),
+	])]
+	fn sample_home_excludes_named_collections() {
+		let (_, path) = sample_home_for_window(1_500_000_000).expect("collections configured");
+		let subs: Vec<&str> = path.split('+').collect();
+		assert!(subs.contains(&"rust"));
+		assert!(subs.contains(&"golang"));
+		assert!(!subs.contains(&"onlyhere1"), "excluded-only sub leaked: {path}");
+		assert!(!subs.contains(&"onlyhere2"), "excluded-only sub leaked: {path}");
+	}
+
+	#[test]
+	#[sealed_test(env = [
+		// `shared` appears in both an included and an excluded collection;
+		// exclusion is per-collection, so `shared` should still be sampled.
+		("REDLIB_COLLECTIONS", "ok=rust+shared;nsfw=shared+onlyhere"),
+		("REDLIB_HOME_EXCLUDED_COLLECTIONS", "nsfw"),
+	])]
+	fn sample_home_keeps_subs_present_in_non_excluded_collection() {
+		let (_, path) = sample_home_for_window(1_500_000_000).expect("collections configured");
+		let subs: Vec<&str> = path.split('+').collect();
+		assert!(subs.contains(&"shared"), "cross-listed sub was wrongly dropped: {path}");
+		assert!(!subs.contains(&"onlyhere"));
+	}
+
+	#[test]
+	#[sealed_test(env = [
+		("REDLIB_COLLECTIONS", "ok=rust+golang;nsfw=onlyhere"),
+		("REDLIB_HOME_EXCLUDED_COLLECTIONS", "  nsfw  + + other "),
+	])]
+	fn sample_home_excluded_list_tolerates_whitespace_and_empty_entries() {
+		let (_, path) = sample_home_for_window(1_500_000_000).expect("collections configured");
+		assert!(!path.contains("onlyhere"));
 	}
 }
