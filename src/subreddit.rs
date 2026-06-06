@@ -42,6 +42,12 @@ struct SubredditTemplate {
 	no_posts: bool,
 	current_collection: String,
 	collection_subreddits: Vec<String>,
+	/// Decimal window_id when this response was served via the
+	/// home-from-collections path. Empty string for every other request.
+	/// Pagination links embed this as `&w=<id>` so a deep rabbit-hole stays
+	/// anchored to its original window — only a fresh visit to `/` (which
+	/// drops the param) rotates to a new sample.
+	home_window_pin: String,
 }
 
 #[derive(Template)]
@@ -137,10 +143,14 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 	// home-from-collections path; used downstream to route the fetch through
 	// `fetch_home_posts` so the per-window cache hits.
 	let mut home_window_id: Option<u64> = None;
+	// `?w=<id>` pins the sample to a specific window — pagination links carry
+	// it forward so a deep rabbit-hole survives the 10-minute rotation. Garbage
+	// values silently fall back to the time-derived window.
+	let pinned_window = param(&format!("?{query}"), "w").and_then(|s| s.parse::<u64>().ok());
 	let default_front = if front_page == "default" || front_page.is_empty() {
 		if root && home_from_collections {
 			let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-			if let Some((window_id, sample)) = collections::sample_home_for_window(now_unix) {
+			if let Some((window_id, sample)) = collections::sample_home_for_window(pinned_window, now_unix) {
 				home_window_id = Some(window_id);
 				sample
 			} else if subscribed.is_empty() {
@@ -271,6 +281,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 			no_posts: false,
 			current_collection: current_collection.clone(),
 			collection_subreddits: collection_subreddits.clone(),
+			home_window_pin: home_window_id.map(|w| w.to_string()).unwrap_or_default(),
 		}))
 	} else {
 		// Home-from-collections requests share a parsed-Vec<Post> cache keyed
@@ -309,6 +320,7 @@ pub async fn community(req: Request<Body>) -> Result<Response<Body>, String> {
 					no_posts,
 					current_collection: current_collection.clone(),
 					collection_subreddits: collection_subreddits.clone(),
+					home_window_pin: home_window_id.map(|w| w.to_string()).unwrap_or_default(),
 				}))
 			}
 			Err(msg) => match msg.as_str() {
