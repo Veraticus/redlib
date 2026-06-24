@@ -389,13 +389,21 @@ pub async fn json(path: String, quarantine: bool) -> Result<Value, String> {
 		Ok(response) => {
 			let status = response.status();
 
-			// 403 is an IP-level block signal from Reddit. Record the cool-down
-			// and bail before the empty-body branch below misclassifies it as
-			// a 429 and spawns yet another token refresh (which is what got us
-			// blocked in the first place).
+			// A 403 carrying a Retry-After header is Reddit's IP-level
+			// rate-limit/block signature (see issue #229 and the matching
+			// `policy_error` check in reddit_short_head) — cool the whole
+			// instance down. A bare 403 is a per-resource refusal (age-gated,
+			// geo-blocked, a token gone briefly stale mid-rollover) and must
+			// not poison every other request, so we return it to this caller
+			// alone. Either way we bail before the empty-body branch below
+			// misclassifies it as a 429 and spawns another token refresh
+			// (which is what got us blocked in the first place).
 			if status.as_u16() == 403 {
-				record_403_cooldown(now);
-				return Err(format!("Reddit returned 403; cooling down for {BLOCK_COOLDOWN_SECS}s | {path}"));
+				if response.headers().get(wreq_header::RETRY_AFTER).is_some() {
+					record_403_cooldown(now);
+					return Err(format!("Reddit returned 403; cooling down for {BLOCK_COOLDOWN_SECS}s | {path}"));
+				}
+				return Err(format!("Reddit returned 403 | {path}"));
 			}
 
 			let reset: Option<String> = if let (Some(remaining), Some(reset), Some(used)) = (
