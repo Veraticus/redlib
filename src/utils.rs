@@ -299,6 +299,10 @@ impl Media {
 			("link", &data["url"], None)
 		};
 
+		// Reclassify external Giphy/Imgur link posts as an inline gif video
+		let external_mp4 = if post_type == "link" { external_media_mp4(url_val.as_str().unwrap_or_default()) } else { None };
+		let post_type = if external_mp4.is_some() { "gif" } else { post_type };
+
 		let source = &data["preview"]["images"][0]["source"];
 
 		let alt_url = alt_url_val.map_or(String::new(), |val| format_url(val.as_str().unwrap_or_default()));
@@ -315,7 +319,7 @@ impl Media {
 		(
 			post_type.to_string(),
 			Self {
-				url: format_url(url_val.as_str().unwrap_or_default()),
+				url: external_mp4.unwrap_or_else(|| format_url(url_val.as_str().unwrap_or_default())),
 				alt_url,
 				// Note: in the data["is_reddit_media_domain"] path above
 				// width and height will be 0.
@@ -1249,6 +1253,26 @@ static REGEX_GIPHY_MEDIA_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"gip
 // Direct Imgur animated media: i.imgur.com/<id>.(gifv|gif|mp4) — album/gallery and static images excluded
 static REGEX_IMGUR_MEDIA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)https?://i\.imgur\.com/([A-Za-z0-9]+)\.(gifv|gif|mp4)$").unwrap());
 
+/// Resolve a Giphy or Imgur media URL to a same-origin proxied MP4 path, or None.
+/// Giphy: id from giphy.com/gifs/<slug-?><id> or giphy.com/media/<id> -> /giphy/media/<id>/giphy.mp4
+/// Imgur: i.imgur.com/<id>.(gifv|gif|mp4) -> /imgur/<id>.mp4
+pub fn external_media_mp4(url: &str) -> Option<String> {
+	let giphy_id = REGEX_GIPHY_GIFS_ID
+		.captures(url)
+		.map(|c| c[1].to_string())
+		.or_else(|| REGEX_GIPHY_MEDIA_ID.captures(url).map(|c| c[1].to_string()));
+	if let Some(id) = giphy_id {
+		return Some(format_url(&format!("https://i.giphy.com/media/{id}/giphy.mp4")));
+	}
+
+	if let Some(caps) = REGEX_IMGUR_MEDIA.captures(url) {
+		let id = &caps[1];
+		return Some(format_url(&format!("https://i.imgur.com/{id}.mp4")));
+	}
+
+	None
+}
+
 /// Detect external media links in comment/post body HTML and replace them with proxied `<video>`
 /// embeds. Supported hosts: Giphy, Imgur animated media. Unknown links pass through unchanged.
 /// When `autoplay` is true the video autoplays (loop, muted, playsinline); otherwise it shows
@@ -1264,26 +1288,7 @@ pub fn embed_external_media(html: String, autoplay: bool) -> String {
 		r#"<figure><video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video></figure>"#
 	);
 
-	let resolve_embed = |href: &str| -> Option<String> {
-		// Giphy resolver: unchanged behavior
-		let giphy_id = REGEX_GIPHY_GIFS_ID
-			.captures(href)
-			.map(|c| c[1].to_string())
-			.or_else(|| REGEX_GIPHY_MEDIA_ID.captures(href).map(|c| c[1].to_string()));
-		if let Some(id) = giphy_id {
-			let proxied = format_url(&format!("https://i.giphy.com/media/{id}/giphy.mp4"));
-			return Some(mp4_figure(&proxied));
-		}
-
-		// Imgur resolver: i.imgur.com/<id>.(gifv|gif|mp4) only
-		if let Some(caps) = REGEX_IMGUR_MEDIA.captures(href) {
-			let id = &caps[1];
-			let proxied = format_url(&format!("https://i.imgur.com/{id}.mp4"));
-			return Some(mp4_figure(&proxied));
-		}
-
-		None
-	};
+	let resolve_embed = |href: &str| -> Option<String> { external_media_mp4(href).map(|proxied| mp4_figure(&proxied)) };
 
 	// First pass: strip the enclosing <p> when the anchor is the sole child.
 	let result = REGEX_EMBED_P_ANCHOR
@@ -1590,8 +1595,8 @@ pub fn to_absolute_url(relative_path: &str) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		deflate_compress, deflate_decompress, embed_external_media, format_num, format_url, parse_post, render_bullet_lists, rewrite_emotes, rewrite_urls, url_path_basename, Post,
-		Preferences,
+		deflate_compress, deflate_decompress, embed_external_media, external_media_mp4, format_num, format_url, parse_post, render_bullet_lists, rewrite_emotes, rewrite_urls,
+		url_path_basename, Media, Post, Preferences,
 	};
 
 	#[test]
@@ -1934,5 +1939,39 @@ How`s your monitor by the way? Any IPS bleed whatsoever? I either got lucky or t
 		let post_off = parse_post(&value, false, false).await;
 		assert!(post_off.body.contains("controls loop muted playsinline"));
 		assert!(!post_off.body.contains("autoplay"));
+	}
+
+	#[test]
+	fn test_external_media_mp4() {
+		assert_eq!(
+			external_media_mp4("https://giphy.com/gifs/nmubncJp1iOk69CVCo"),
+			Some("/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4".to_string())
+		);
+		assert_eq!(
+			external_media_mp4("https://i.imgur.com/abc123.gifv"),
+			Some("/imgur/abc123.mp4".to_string())
+		);
+		assert_eq!(external_media_mp4("https://example.com/page"), None);
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn test_media_parse_giphy_link_post() {
+		let (post_type, media, _) = Media::parse(&serde_json::json!({"url": "https://giphy.com/gifs/nmubncJp1iOk69CVCo"})).await;
+		assert_eq!(post_type, "gif");
+		assert_eq!(media.url, "/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4");
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn test_media_parse_imgur_link_post() {
+		let (post_type, media, _) = Media::parse(&serde_json::json!({"url": "https://i.imgur.com/abc123.gifv"})).await;
+		assert_eq!(post_type, "gif");
+		assert_eq!(media.url, "/imgur/abc123.mp4");
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn test_media_parse_plain_link_unchanged() {
+		let (post_type, media, _) = Media::parse(&serde_json::json!({"url": "https://example.com/page"})).await;
+		assert_eq!(post_type, "link");
+		assert_eq!(media.url, "https://example.com/page");
 	}
 }
