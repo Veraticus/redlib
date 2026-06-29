@@ -1092,6 +1092,7 @@ static REGEX_URL_EXTERNAL_PREVIEW: LazyLock<Regex> = LazyLock::new(|| Regex::new
 static REGEX_URL_STYLES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://styles\.redditmedia\.com/(.*)").unwrap());
 static REGEX_URL_STATIC_MEDIA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://www\.redditstatic\.com/(.*)").unwrap());
 static REGEX_URL_GIPHY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://i\.giphy\.com/(.*)").unwrap());
+static REGEX_URL_IMGUR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://i\.imgur\.com/(.*)").unwrap());
 
 /// Direct urls to proxy if proxy is enabled
 pub fn format_url(url: &str) -> String {
@@ -1145,6 +1146,7 @@ pub fn format_url(url: &str) -> String {
 				"styles.redditmedia.com" => capture(&REGEX_URL_STYLES, "/style/", 1),
 				"www.redditstatic.com" => capture(&REGEX_URL_STATIC_MEDIA, "/static/", 1),
 				"i.giphy.com" => capture(&REGEX_URL_GIPHY, "/giphy/", 1),
+				"i.imgur.com" => capture(&REGEX_URL_IMGUR, "/imgur/", 1),
 				_ => url.to_string(),
 			}
 		})
@@ -1237,17 +1239,20 @@ pub fn rewrite_urls(input_text: &str) -> String {
 	}
 }
 
-// Giphy anchor patterns: paragraph-wrapped and standalone
-static REGEX_GIPHY_P_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<p><a href="(https?://[^"]*giphy\.com[^"]*)"[^>]*>.*?</a></p>"#).unwrap());
-static REGEX_GIPHY_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<a href="(https?://[^"]*giphy\.com[^"]*)"[^>]*>.*?</a>"#).unwrap());
+// Generic anchor patterns for embed_external_media: paragraph-wrapped and standalone
+static REGEX_EMBED_P_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<p><a href="(https?://[^"]*)"[^>]*>.*?</a></p>"#).unwrap());
+static REGEX_EMBED_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<a href="(https?://[^"]*)"[^>]*>.*?</a>"#).unwrap());
 // Extract Giphy ID from gifs URLs (last alphanumeric token after optional slug)
 static REGEX_GIPHY_GIFS_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/gifs/(?:[A-Za-z0-9]+-)*([A-Za-z0-9]+)").unwrap());
 // Extract Giphy ID from media URLs
 static REGEX_GIPHY_MEDIA_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/media/([A-Za-z0-9]+)").unwrap());
+// Direct Imgur animated media: i.imgur.com/<id>.(gifv|gif|mp4) — album/gallery and static images excluded
+static REGEX_IMGUR_MEDIA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)https?://i\.imgur\.com/([A-Za-z0-9]+)\.(gifv|gif|mp4)$").unwrap());
 
-/// Detect Giphy links in comment body HTML and replace them with proxied `<video>` embeds.
+/// Detect external media links in comment/post body HTML and replace them with proxied `<video>`
+/// embeds. Supported hosts: Giphy, Imgur animated media. Unknown links pass through unchanged.
 /// When `autoplay` is true the video autoplays (loop, muted, playsinline); otherwise it shows
-/// player controls. Non-Giphy content is passed through unchanged.
+/// player controls.
 pub fn embed_external_media(html: String, autoplay: bool) -> String {
 	let attrs = if autoplay {
 		"autoplay loop muted playsinline"
@@ -1255,25 +1260,39 @@ pub fn embed_external_media(html: String, autoplay: bool) -> String {
 		"controls loop muted playsinline"
 	};
 
-	let giphy_video = |href: &str| -> Option<String> {
-		let id = REGEX_GIPHY_GIFS_ID
+	let mp4_figure = |proxied: &str| format!(
+		r#"<figure><video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video></figure>"#
+	);
+
+	let resolve_embed = |href: &str| -> Option<String> {
+		// Giphy resolver: unchanged behavior
+		let giphy_id = REGEX_GIPHY_GIFS_ID
 			.captures(href)
 			.map(|c| c[1].to_string())
-			.or_else(|| REGEX_GIPHY_MEDIA_ID.captures(href).map(|c| c[1].to_string()))?;
-		let proxied = format_url(&format!("https://i.giphy.com/media/{id}/giphy.mp4"));
-		Some(format!(
-			r#"<figure><video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video></figure>"#
-		))
+			.or_else(|| REGEX_GIPHY_MEDIA_ID.captures(href).map(|c| c[1].to_string()));
+		if let Some(id) = giphy_id {
+			let proxied = format_url(&format!("https://i.giphy.com/media/{id}/giphy.mp4"));
+			return Some(mp4_figure(&proxied));
+		}
+
+		// Imgur resolver: i.imgur.com/<id>.(gifv|gif|mp4) only
+		if let Some(caps) = REGEX_IMGUR_MEDIA.captures(href) {
+			let id = &caps[1];
+			let proxied = format_url(&format!("https://i.imgur.com/{id}.mp4"));
+			return Some(mp4_figure(&proxied));
+		}
+
+		None
 	};
 
 	// First pass: strip the enclosing <p> when the anchor is the sole child.
-	let result = REGEX_GIPHY_P_ANCHOR
-		.replace_all(&html, |caps: &regex::Captures| giphy_video(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
+	let result = REGEX_EMBED_P_ANCHOR
+		.replace_all(&html, |caps: &regex::Captures| resolve_embed(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
 		.to_string();
 
-	// Second pass: replace any remaining standalone Giphy anchors.
-	REGEX_GIPHY_ANCHOR
-		.replace_all(&result, |caps: &regex::Captures| giphy_video(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
+	// Second pass: replace any remaining standalone anchors.
+	REGEX_EMBED_ANCHOR
+		.replace_all(&result, |caps: &regex::Captures| resolve_embed(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
 		.to_string()
 }
 
@@ -1843,6 +1862,53 @@ How`s your monitor by the way? Any IPS bleed whatsoever? I either got lucky or t
 	fn test_embed_external_media_passthrough() {
 		let input = r#"<a href="https://example.com/x">x</a>"#;
 		assert_eq!(embed_external_media(input.to_string(), true), input);
+	}
+
+	#[test]
+	fn test_imgur_format_url() {
+		assert_eq!(format_url("https://i.imgur.com/abc123.mp4"), "/imgur/abc123.mp4");
+	}
+
+	#[test]
+	fn test_embed_external_media_imgur_autoplay() {
+		let input = r#"<p><a href="https://i.imgur.com/abc123.gifv">imgur</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" autoplay loop muted playsinline preload="metadata"><source src="/imgur/abc123.mp4" type="video/mp4"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_imgur_no_autoplay() {
+		let input = r#"<p><a href="https://i.imgur.com/abc123.gifv">imgur</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" controls loop muted playsinline preload="metadata"><source src="/imgur/abc123.mp4" type="video/mp4"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), false), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_imgur_gif_and_mp4() {
+		let gif_input = r#"<p><a href="https://i.imgur.com/abc123.gif">imgur</a></p>"#;
+		let mp4_input = r#"<p><a href="https://i.imgur.com/abc123.mp4">imgur</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" autoplay loop muted playsinline preload="metadata"><source src="/imgur/abc123.mp4" type="video/mp4"></video></figure>"#;
+		assert_eq!(embed_external_media(gif_input.to_string(), true), expected);
+		assert_eq!(embed_external_media(mp4_input.to_string(), true), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_imgur_gallery_passthrough() {
+		let input = r#"<a href="https://imgur.com/gallery/xyz">x</a>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), input);
+	}
+
+	#[test]
+	fn test_embed_external_media_mixed_hosts() {
+		let input = r#"<p><a href="https://giphy.com/gifs/nmubncJp1iOk69CVCo">giphy</a></p><p><a href="https://i.imgur.com/abc123.gifv">imgur</a></p>"#;
+		let result = embed_external_media(input.to_string(), true);
+		assert!(
+			result.contains(r#"<source src="/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4" type="video/mp4">"#),
+			"expected giphy embed; got: {result}"
+		);
+		assert!(result.contains(r#"<source src="/imgur/abc123.mp4" type="video/mp4">"#), "expected imgur embed; got: {result}");
+		assert!(!result.contains("giphy.com"), "must not leak raw giphy.com URL; got: {result}");
+		assert!(!result.contains("i.imgur.com"), "must not leak raw i.imgur.com URL; got: {result}");
 	}
 
 	#[tokio::test(flavor = "multi_thread")]
