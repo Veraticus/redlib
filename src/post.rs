@@ -10,7 +10,8 @@ pub const DEFAULT_COMMENT_LIMIT: usize = 30;
 use crate::server::RequestExt;
 use crate::subreddit::{can_access_quarantine, quarantine};
 use crate::utils::{
-	error, format_num, get_filters, nsfw_landing, param, parse_post, rewrite_emotes, setting, template, time, val, Author, Awards, Comment, Flair, FlairPart, Post, Preferences,
+	embed_external_media, error, format_num, get_filters, nsfw_landing, param, parse_post, rewrite_emotes, setting, template, time, val, Author, Awards, Comment, Flair,
+	FlairPart, Post, Preferences,
 };
 use askama::Template;
 use hyper::{Body, Request, Response};
@@ -273,7 +274,7 @@ fn build_comment(
 	} else if use_markdown {
 		val(comment, "body")
 	} else {
-		rewrite_emotes(&data["media_metadata"], val(comment, "body_html"))
+		embed_external_media(rewrite_emotes(&data["media_metadata"], val(comment, "body_html")), setting(req, "autoplay_videos") == "on")
 	};
 	let kind = comment["kind"].as_str().unwrap_or_default().to_string();
 

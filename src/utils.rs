@@ -1090,6 +1090,7 @@ static REGEX_URL_PREVIEW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?
 static REGEX_URL_EXTERNAL_PREVIEW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://external\-preview\.redd\.it/(.*)").unwrap());
 static REGEX_URL_STYLES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://styles\.redditmedia\.com/(.*)").unwrap());
 static REGEX_URL_STATIC_MEDIA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://www\.redditstatic\.com/(.*)").unwrap());
+static REGEX_URL_GIPHY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://i\.giphy\.com/(.*)").unwrap());
 
 /// Direct urls to proxy if proxy is enabled
 pub fn format_url(url: &str) -> String {
@@ -1142,6 +1143,7 @@ pub fn format_url(url: &str) -> String {
 				"external-preview.redd.it" => capture(&REGEX_URL_EXTERNAL_PREVIEW, "/preview/external-pre/", 1),
 				"styles.redditmedia.com" => capture(&REGEX_URL_STYLES, "/style/", 1),
 				"www.redditstatic.com" => capture(&REGEX_URL_STATIC_MEDIA, "/static/", 1),
+				"i.giphy.com" => capture(&REGEX_URL_GIPHY, "/giphy/", 1),
 				_ => url.to_string(),
 			}
 		})
@@ -1232,6 +1234,46 @@ pub fn rewrite_urls(input_text: &str) -> String {
 				.replace(&image_to_replace, &_image_replacement)
 		}
 	}
+}
+
+// Giphy anchor patterns: paragraph-wrapped and standalone
+static REGEX_GIPHY_P_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<p><a href="(https?://[^"]*giphy\.com[^"]*)"[^>]*>.*?</a></p>"#).unwrap());
+static REGEX_GIPHY_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<a href="(https?://[^"]*giphy\.com[^"]*)"[^>]*>.*?</a>"#).unwrap());
+// Extract Giphy ID from gifs URLs (last alphanumeric token after optional slug)
+static REGEX_GIPHY_GIFS_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/gifs/(?:[A-Za-z0-9]+-)*([A-Za-z0-9]+)").unwrap());
+// Extract Giphy ID from media URLs
+static REGEX_GIPHY_MEDIA_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/media/([A-Za-z0-9]+)").unwrap());
+
+/// Detect Giphy links in comment body HTML and replace them with proxied `<video>` embeds.
+/// When `autoplay` is true the video autoplays (loop, muted, playsinline); otherwise it shows
+/// player controls. Non-Giphy content is passed through unchanged.
+pub fn embed_external_media(html: String, autoplay: bool) -> String {
+	let attrs = if autoplay {
+		"autoplay loop muted playsinline"
+	} else {
+		"controls loop muted playsinline"
+	};
+
+	let giphy_video = |href: &str| -> Option<String> {
+		let id = REGEX_GIPHY_GIFS_ID
+			.captures(href)
+			.map(|c| c[1].to_string())
+			.or_else(|| REGEX_GIPHY_MEDIA_ID.captures(href).map(|c| c[1].to_string()))?;
+		let proxied = format_url(&format!("https://i.giphy.com/media/{id}/giphy.mp4"));
+		Some(format!(
+			r#"<figure><video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video></figure>"#
+		))
+	};
+
+	// First pass: strip the enclosing <p> when the anchor is the sole child.
+	let result = REGEX_GIPHY_P_ANCHOR
+		.replace_all(&html, |caps: &regex::Captures| giphy_video(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
+		.to_string();
+
+	// Second pass: replace any remaining standalone Giphy anchors.
+	REGEX_GIPHY_ANCHOR
+		.replace_all(&result, |caps: &regex::Captures| giphy_video(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
+		.to_string()
 }
 
 // These links all follow a pattern of "https://reddit-econ-prod-assets-permanent.s3.amazonaws.com/asset-manager/SUBREDDIT_ID/RANDOM_FILENAME.png"
@@ -1527,7 +1569,10 @@ pub fn to_absolute_url(relative_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-	use super::{deflate_compress, deflate_decompress, format_num, format_url, render_bullet_lists, rewrite_emotes, rewrite_urls, url_path_basename, Post, Preferences};
+	use super::{
+		deflate_compress, deflate_decompress, embed_external_media, format_num, format_url, render_bullet_lists, rewrite_emotes, rewrite_urls, url_path_basename, Post,
+		Preferences,
+	};
 
 	#[test]
 	fn format_num_works() {
@@ -1762,5 +1807,40 @@ How`s your monitor by the way? Any IPS bleed whatsoever? I either got lucky or t
 		let decompressed = if compression { deflate_decompress(compressed).unwrap() } else { compressed };
 		let deserialized: Preferences = bincode::deserialize(&decompressed).unwrap();
 		assert_eq!(*input, deserialized);
+	}
+
+	#[test]
+	fn test_giphy_format_url() {
+		assert_eq!(
+			format_url("https://i.giphy.com/media/nmubncJp1iOk69CVCo/giphy.mp4"),
+			"/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4"
+		);
+	}
+
+	#[test]
+	fn test_embed_external_media_giphy_autoplay() {
+		let input = r#"<p><a href="https://giphy.com/gifs/nmubncJp1iOk69CVCo">https://giphy.com/gifs/nmubncJp1iOk69CVCo</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" autoplay loop muted playsinline preload="metadata"><source src="/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4" type="video/mp4"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_giphy_no_autoplay() {
+		let input = r#"<p><a href="https://giphy.com/gifs/nmubncJp1iOk69CVCo">https://giphy.com/gifs/nmubncJp1iOk69CVCo</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" controls loop muted playsinline preload="metadata"><source src="/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4" type="video/mp4"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), false), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_giphy_slug() {
+		let input = r#"<p><a href="https://giphy.com/gifs/funny-cat-dance-nmubncJp1iOk69CVCo">https://giphy.com/gifs/funny-cat-dance-nmubncJp1iOk69CVCo</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" autoplay loop muted playsinline preload="metadata"><source src="/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4" type="video/mp4"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_passthrough() {
+		let input = r#"<a href="https://example.com/x">x</a>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), input);
 	}
 }

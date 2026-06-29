@@ -1447,6 +1447,10 @@ a.search_subreddit:hover {
     margin: 0;
 }
 
+.comment .post_media_video {
+    max-width: 50%;
+}
+
 .comment_left,
 .comment_right {
     display: flex;
