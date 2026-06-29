@@ -68,7 +68,7 @@ pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 		// Otherwise, grab the JSON output from the request
 		Ok(response) => {
 			// Parse the JSON into Post and Comment structs
-			let post = parse_post(&response[0]["data"]["children"][0], false).await;
+			let post = parse_post(&response[0]["data"]["children"][0], false, setting(&req, "autoplay_videos") == "on").await;
 
 			let req_url = req.uri().to_string();
 			// Return landing page if this post if this Reddit deems this post
@@ -143,7 +143,7 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 
 	match json(path, quarantined).await {
 		Ok(response) => {
-			let post = parse_post(&response[0]["data"]["children"][0], true).await;
+			let post = parse_post(&response[0]["data"]["children"][0], true, false).await;
 
 			// Check NSFW gating (server-side SFW_ONLY only)
 			if post.nsfw && crate::utils::sfw_only() {

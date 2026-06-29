@@ -853,7 +853,7 @@ pub fn filter_posts(posts: &mut Vec<Post>, filters: &HashSet<String>) -> (u64, b
 
 /// Creates a [`Post`] from a provided JSON.
 /// Parse a single post from Reddit's JSON. If `use_markdown` is true, the body will contain raw markdown.
-pub async fn parse_post(post: &Value, use_markdown: bool) -> Post {
+pub async fn parse_post(post: &Value, use_markdown: bool, autoplay: bool) -> Post {
 	// Grab UTC time as unix timestamp
 	let (rel_time, created) = time(post["data"]["created_utc"].as_f64().unwrap_or_default());
 	// Parse post score and upvote ratio
@@ -885,14 +885,15 @@ pub async fn parse_post(post: &Value, use_markdown: bool) -> Post {
 		val(post, "selftext")
 	} else {
 		let selftext = val(post, "selftext");
-		if selftext.contains("```") {
+		let html = if selftext.contains("```") {
 			let mut html_output = String::new();
 			let parser = pulldown_cmark::Parser::new(&selftext);
 			pulldown_cmark::html::push_html(&mut html_output, parser);
 			rewrite_urls(&html_output)
 		} else {
 			rewrite_urls(&val(post, "selftext_html"))
-		}
+		};
+		embed_external_media(html, autoplay)
 	};
 
 	// Build a post using data parsed from Reddit post API
@@ -1570,7 +1571,7 @@ pub fn to_absolute_url(relative_path: &str) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		deflate_compress, deflate_decompress, embed_external_media, format_num, format_url, render_bullet_lists, rewrite_emotes, rewrite_urls, url_path_basename, Post,
+		deflate_compress, deflate_decompress, embed_external_media, format_num, format_url, parse_post, render_bullet_lists, rewrite_emotes, rewrite_urls, url_path_basename, Post,
 		Preferences,
 	};
 
@@ -1842,5 +1843,30 @@ How`s your monitor by the way? Any IPS bleed whatsoever? I either got lucky or t
 	fn test_embed_external_media_passthrough() {
 		let input = r#"<a href="https://example.com/x">x</a>"#;
 		assert_eq!(embed_external_media(input.to_string(), true), input);
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn test_parse_post_embeds_selftext_giphy() {
+		let value = serde_json::json!({
+			"data": {
+				"title": "t",
+				"selftext_html": "<p><a href=\"https://giphy.com/gifs/nmubncJp1iOk69CVCo\">gif</a></p>"
+			}
+		});
+
+		// autoplay=true -> autoplaying proxied <video>, no raw giphy.com URL
+		let post = parse_post(&value, false, true).await;
+		assert!(
+			post.body.contains(r#"<video class="post_media_video" autoplay loop muted playsinline preload="metadata">"#),
+			"parse_post must embed an autoplay <video> for a selftext Giphy link; got: {}",
+			post.body
+		);
+		assert!(post.body.contains(r#"<source src="/giphy/media/nmubncJp1iOk69CVCo/giphy.mp4" type="video/mp4">"#));
+		assert!(!post.body.contains("giphy.com"), "must not leak a raw giphy.com URL");
+
+		// autoplay=false -> controls, no autoplay attribute
+		let post_off = parse_post(&value, false, false).await;
+		assert!(post_off.body.contains("controls loop muted playsinline"));
+		assert!(!post_off.body.contains("autoplay"));
 	}
 }
