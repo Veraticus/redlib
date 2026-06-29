@@ -94,4 +94,8 @@
 		{%- endfor %}
 
 	</div>
+{% if prefs.use_hls == "on" && post.media.alt_url.is_empty() && self.has_hls_embed() %}
+<script src="/hls.min.js"></script>
+<script src="/playHLSVideo.js"></script>
+{% endif %}
 {% endblock %}

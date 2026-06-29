@@ -1252,6 +1252,8 @@ static REGEX_GIPHY_GIFS_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giph
 static REGEX_GIPHY_MEDIA_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/media/([A-Za-z0-9]+)").unwrap());
 // Direct Imgur animated media: i.imgur.com/<id>.(gifv|gif|mp4) — album/gallery and static images excluded
 static REGEX_IMGUR_MEDIA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)https?://i\.imgur\.com/([A-Za-z0-9]+)\.(gifv|gif|mp4)$").unwrap());
+// Bare v.redd.it links (no /DASH or /HLSPlaylist path) — anchored to prevent matching full video URLs
+static REGEX_VREDDIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https?://v\.redd\.it/([A-Za-z0-9]+)/?$").unwrap());
 
 /// Resolve a Giphy or Imgur media URL to a same-origin proxied MP4 path, or None.
 /// Giphy: id from giphy.com/gifs/<slug-?><id> or giphy.com/media/<id> -> /giphy/media/<id>/giphy.mp4
@@ -1288,7 +1290,21 @@ pub fn embed_external_media(html: String, autoplay: bool) -> String {
 		r#"<figure><video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video></figure>"#
 	);
 
-	let resolve_embed = |href: &str| -> Option<String> { external_media_mp4(href).map(|proxied| mp4_figure(&proxied)) };
+	let resolve_embed = |href: &str| -> Option<String> {
+		if let Some(proxied) = external_media_mp4(href) {
+			return Some(mp4_figure(&proxied));
+		}
+		if let Some(caps) = REGEX_VREDDIT.captures(href) {
+			let id = &caps[1];
+			let hls_url = format!("https://v.redd.it/{id}/HLSPlaylist.m3u8");
+			let proxied = format_url(&hls_url);
+			let hls_autoplay = if autoplay { " hls_autoplay" } else { "" };
+			return Some(format!(
+				r#"<figure><video class="post_media_video{hls_autoplay}" controls preload="none"><source src="{proxied}" type="application/vnd.apple.mpegurl"></video></figure>"#
+			));
+		}
+		None
+	};
 
 	// First pass: strip the enclosing <p> when the anchor is the sole child.
 	let result = REGEX_EMBED_P_ANCHOR
@@ -1973,5 +1989,25 @@ How`s your monitor by the way? Any IPS bleed whatsoever? I either got lucky or t
 		let (post_type, media, _) = Media::parse(&serde_json::json!({"url": "https://example.com/page"})).await;
 		assert_eq!(post_type, "link");
 		assert_eq!(media.url, "https://example.com/page");
+	}
+
+	#[test]
+	fn test_embed_external_media_vreddit_autoplay() {
+		let input = r#"<p><a href="https://v.redd.it/abcd1234">video</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video hls_autoplay" controls preload="none"><source src="/hls/abcd1234/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_vreddit_no_autoplay() {
+		let input = r#"<p><a href="https://v.redd.it/abcd1234">video</a></p>"#;
+		let expected = r#"<figure><video class="post_media_video" controls preload="none"><source src="/hls/abcd1234/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl"></video></figure>"#;
+		assert_eq!(embed_external_media(input.to_string(), false), expected);
+	}
+
+	#[test]
+	fn test_embed_external_media_vreddit_path_passthrough() {
+		let input = r#"<a href="https://v.redd.it/abcd1234/DASH_720.mp4">x</a>"#;
+		assert_eq!(embed_external_media(input.to_string(), true), input);
 	}
 }

@@ -35,6 +35,16 @@ struct PostTemplate {
 
 static COMMENT_SEARCH_CAPTURE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\?q=(.*)&type=comment").unwrap());
 
+fn comment_has_hls(c: &Comment) -> bool {
+	contains_hls_source(&c.body) || c.replies.iter().any(comment_has_hls)
+}
+
+impl PostTemplate {
+	fn has_hls_embed(&self) -> bool {
+		contains_hls_source(&self.post.body) || self.comments.iter().any(comment_has_hls)
+	}
+}
+
 pub async fn item(req: Request<Body>) -> Result<Response<Body>, String> {
 	// Build Reddit API path
 	let mut path: String = format!("{}.json?{}&raw_json=1", req.uri().path(), req.uri().query().unwrap_or_default());
@@ -164,6 +174,10 @@ pub async fn item_json(req: Request<Body>) -> Result<Response<Body>, String> {
 			}
 		}
 	}
+}
+
+fn contains_hls_source(html: &str) -> bool {
+	html.contains("application/vnd.apple.mpegurl")
 }
 
 // COMMENTS
@@ -347,5 +361,16 @@ fn build_comment(
 		is_filtered,
 		more_count,
 		prefs: Preferences::new(req),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::contains_hls_source;
+
+	#[test]
+	fn test_contains_hls_source() {
+		assert!(contains_hls_source("...application/vnd.apple.mpegurl..."));
+		assert!(!contains_hls_source("<p>hi</p>"));
 	}
 }
