@@ -1243,13 +1243,13 @@ pub fn rewrite_urls(input_text: &str) -> String {
 	}
 }
 
-// Generic anchor patterns for embed_external_media: paragraph-wrapped and standalone
-static REGEX_EMBED_P_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<p><a href="(https?://[^"]*)"[^>]*>.*?</a></p>"#).unwrap());
+// Generic anchor patterns for embed_external_media: paragraph-wrapped (sole child) and standalone
+static REGEX_EMBED_P_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<p><a href="(https?://[^"]*)"[^>]*>[^<]*</a></p>"#).unwrap());
 static REGEX_EMBED_ANCHOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)<a href="(https?://[^"]*)"[^>]*>.*?</a>"#).unwrap());
-// Extract Giphy ID from gifs URLs (last alphanumeric token after optional slug)
-static REGEX_GIPHY_GIFS_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/gifs/(?:[A-Za-z0-9]+-)*([A-Za-z0-9]+)").unwrap());
-// Extract Giphy ID from media URLs
-static REGEX_GIPHY_MEDIA_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"giphy\.com/media/([A-Za-z0-9]+)").unwrap());
+// Extract Giphy ID from gifs URLs (last alphanumeric token after optional slug) — scheme+host anchored
+static REGEX_GIPHY_GIFS_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://(?:[a-z0-9-]+\.)?giphy\.com/gifs/(?:[A-Za-z0-9]+-)*([A-Za-z0-9]+)").unwrap());
+// Extract Giphy ID from media URLs — scheme+host anchored
+static REGEX_GIPHY_MEDIA_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://(?:[a-z0-9-]+\.)?giphy\.com/media/([A-Za-z0-9]+)").unwrap());
 // Direct Imgur animated media: i.imgur.com/<id>.(gifv|gif|mp4) — album/gallery and static images excluded
 static REGEX_IMGUR_MEDIA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)https?://i\.imgur\.com/([A-Za-z0-9]+)\.(gifv|gif|mp4)$").unwrap());
 // Bare v.redd.it links (no /DASH or /HLSPlaylist path) — anchored to prevent matching full video URLs
@@ -1280,40 +1280,49 @@ pub fn external_media_mp4(url: &str) -> Option<String> {
 /// When `autoplay` is true the video autoplays (loop, muted, playsinline); otherwise it shows
 /// player controls.
 pub fn embed_external_media(html: String, autoplay: bool) -> String {
+	if !html.contains("<a href") {
+		return html;
+	}
+
 	let attrs = if autoplay {
 		"autoplay loop muted playsinline"
 	} else {
 		"controls loop muted playsinline"
 	};
 
-	let mp4_figure = |proxied: &str| format!(
-		r#"<figure><video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video></figure>"#
-	);
+	// `block=true` wraps the video in <figure>; `block=false` emits a bare <video> for inline use.
+	let mp4_embed = |proxied: &str, block: bool| {
+		let inner = format!(r#"<video class="post_media_video" {attrs} preload="metadata"><source src="{proxied}" type="video/mp4"></video>"#);
+		if block { format!("<figure>{inner}</figure>") } else { inner }
+	};
 
-	let resolve_embed = |href: &str| -> Option<String> {
+	let resolve_embed = |href: &str, block: bool| -> Option<String> {
 		if let Some(proxied) = external_media_mp4(href) {
-			return Some(mp4_figure(&proxied));
+			return Some(mp4_embed(&proxied, block));
 		}
 		if let Some(caps) = REGEX_VREDDIT.captures(href) {
 			let id = &caps[1];
 			let hls_url = format!("https://v.redd.it/{id}/HLSPlaylist.m3u8");
 			let proxied = format_url(&hls_url);
 			let hls_autoplay = if autoplay { " hls_autoplay" } else { "" };
-			return Some(format!(
-				r#"<figure><video class="post_media_video{hls_autoplay}" controls preload="none"><source src="{proxied}" type="application/vnd.apple.mpegurl"></video></figure>"#
-			));
+			let inner = format!(
+				r#"<video class="post_media_video{hls_autoplay}" controls preload="none"><source src="{proxied}" type="application/vnd.apple.mpegurl"><a href="{proxied}">Video</a></video>"#
+			);
+			return Some(if block { format!("<figure>{inner}</figure>") } else { inner });
 		}
 		None
 	};
 
-	// First pass: strip the enclosing <p> when the anchor is the sole child.
+	// First pass: replace paragraph-wrapped sole-child anchors, stripping the enclosing <p>.
+	// block=true so the embed is wrapped in <figure>.
 	let result = REGEX_EMBED_P_ANCHOR
-		.replace_all(&html, |caps: &regex::Captures| resolve_embed(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
+		.replace_all(&html, |caps: &regex::Captures| resolve_embed(&caps[1], true).unwrap_or_else(|| caps[0].to_string()))
 		.to_string();
 
-	// Second pass: replace any remaining standalone anchors.
+	// Second pass: replace remaining inline/standalone anchors without a <figure> wrapper.
+	// block=false prevents nesting a block element inside an inline context.
 	REGEX_EMBED_ANCHOR
-		.replace_all(&result, |caps: &regex::Captures| resolve_embed(&caps[1]).unwrap_or_else(|| caps[0].to_string()))
+		.replace_all(&result, |caps: &regex::Captures| resolve_embed(&caps[1], false).unwrap_or_else(|| caps[0].to_string()))
 		.to_string()
 }
 
@@ -1994,15 +2003,39 @@ How`s your monitor by the way? Any IPS bleed whatsoever? I either got lucky or t
 	#[test]
 	fn test_embed_external_media_vreddit_autoplay() {
 		let input = r#"<p><a href="https://v.redd.it/abcd1234">video</a></p>"#;
-		let expected = r#"<figure><video class="post_media_video hls_autoplay" controls preload="none"><source src="/hls/abcd1234/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl"></video></figure>"#;
+		let expected = r#"<figure><video class="post_media_video hls_autoplay" controls preload="none"><source src="/hls/abcd1234/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl"><a href="/hls/abcd1234/HLSPlaylist.m3u8">Video</a></video></figure>"#;
 		assert_eq!(embed_external_media(input.to_string(), true), expected);
 	}
 
 	#[test]
 	fn test_embed_external_media_vreddit_no_autoplay() {
 		let input = r#"<p><a href="https://v.redd.it/abcd1234">video</a></p>"#;
-		let expected = r#"<figure><video class="post_media_video" controls preload="none"><source src="/hls/abcd1234/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl"></video></figure>"#;
+		let expected = r#"<figure><video class="post_media_video" controls preload="none"><source src="/hls/abcd1234/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl"><a href="/hls/abcd1234/HLSPlaylist.m3u8">Video</a></video></figure>"#;
 		assert_eq!(embed_external_media(input.to_string(), false), expected);
+	}
+
+	#[test]
+	fn test_external_media_mp4_notgiphy_passthrough() {
+		assert_eq!(external_media_mp4("https://notgiphy.com/gifs/abc123"), None);
+	}
+
+	#[test]
+	fn test_embed_external_media_inline_anchor() {
+		// Anchor is NOT a sole child of <p> → second pass → no <figure> wrapper
+		let input = r#"<p>see <a href="https://giphy.com/gifs/abc123">this</a> here</p>"#;
+		let result = embed_external_media(input.to_string(), true);
+		assert!(result.contains("<video"), "expected <video> embed; got: {result}");
+		assert!(!result.contains("<figure>"), "must not wrap inline embed in <figure>; got: {result}");
+		assert!(result.contains("see "), "surrounding text 'see ' must be preserved; got: {result}");
+		assert!(result.contains(" here"), "surrounding text ' here' must be preserved; got: {result}");
+	}
+
+	#[test]
+	fn test_embed_external_media_sibling_link_preserved() {
+		// Two anchors in <p> → first pass doesn't match → second pass → sibling link kept
+		let input = r#"<p><a href="https://giphy.com/gifs/abc123">g</a> <a href="https://example.com">o</a></p>"#;
+		let result = embed_external_media(input.to_string(), true);
+		assert!(result.contains(r#"href="https://example.com""#), "sibling link must be preserved; got: {result}");
 	}
 
 	#[test]

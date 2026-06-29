@@ -366,11 +366,62 @@ fn build_comment(
 
 #[cfg(test)]
 mod tests {
-	use super::contains_hls_source;
+	use super::{comment_has_hls, contains_hls_source};
+	use crate::utils::{Author, Awards, Comment, Flair, Preferences};
+
+	fn make_comment(body: &str, replies: Vec<Comment>) -> Comment {
+		Comment {
+			id: String::new(),
+			kind: String::new(),
+			parent_id: String::new(),
+			parent_kind: String::new(),
+			post_link: String::new(),
+			post_author: String::new(),
+			body: body.to_string(),
+			author: Author {
+				name: String::new(),
+				flair: Flair {
+					flair_parts: vec![],
+					text: String::new(),
+					background_color: String::new(),
+					foreground_color: String::new(),
+				},
+				distinguished: String::new(),
+			},
+			score: (String::new(), String::new()),
+			rel_time: String::new(),
+			created: String::new(),
+			edited: (String::new(), String::new()),
+			replies,
+			highlighted: false,
+			awards: Awards(vec![]),
+			collapsed: false,
+			is_filtered: false,
+			more_count: 0,
+			prefs: Preferences::default(),
+		}
+	}
 
 	#[test]
 	fn test_contains_hls_source() {
 		assert!(contains_hls_source("...application/vnd.apple.mpegurl..."));
 		assert!(!contains_hls_source("<p>hi</p>"));
+	}
+
+	#[test]
+	fn test_comment_has_hls_nested_true() {
+		let child = make_comment(
+			r#"<source src="/hls/abc/HLSPlaylist.m3u8" type="application/vnd.apple.mpegurl">"#,
+			vec![],
+		);
+		let parent = make_comment("<p>parent comment</p>", vec![child]);
+		assert!(comment_has_hls(&parent));
+	}
+
+	#[test]
+	fn test_comment_has_hls_nested_false() {
+		let child = make_comment("<p>just text</p>", vec![]);
+		let parent = make_comment("<p>also plain</p>", vec![child]);
+		assert!(!comment_has_hls(&parent));
 	}
 }
